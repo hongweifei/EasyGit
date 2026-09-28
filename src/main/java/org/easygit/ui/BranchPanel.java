@@ -320,6 +320,28 @@ public class BranchPanel extends VBox {
     private ContextMenu tagMenu(TNode n) {
         ContextMenu menu = new ContextMenu();
         menu.getItems().addAll(
+                mi("推送此标签到远程…", () -> {
+                    String remote = Dialogs.chooseRemote(repo());
+                    if (remote == null) return;
+                    Fx.bg("推送标签…", () -> org.easygit.core.NativeGit.pushTag(repo(), remote, n.info.name),
+                            r -> {
+                                UiLog.op("git push " + remote + " " + n.info.name + (r.ok() ? " ✓" : " ✖"),
+                                        r.out(), r.err());
+                                if (r.ok()) Fx.status("已推送标签 " + n.info.name + " → " + remote);
+                                else Fx.error("推送失败", r.message(), null);
+                            });
+                }),
+                mi("推送所有标签", () -> {
+                    String remote = Dialogs.chooseRemote(repo());
+                    if (remote == null) return;
+                    Fx.bg("推送所有标签…", () -> org.easygit.core.NativeGit.pushAllTags(repo(), remote),
+                            r -> {
+                                UiLog.op("git push " + remote + " --tags" + (r.ok() ? " ✓" : " ✖"),
+                                        r.out(), r.err());
+                                if (r.ok()) Fx.status("已推送所有标签 → " + remote);
+                                else Fx.error("推送失败", r.message(), null);
+                            });
+                }),
                 mi("复制名称", () -> {
                     javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
                     cc.putString(n.info.name);
@@ -332,6 +354,18 @@ public class BranchPanel extends VBox {
                                 if (r.ok()) Fx.status("已删除标签 " + n.info.name);
                                 else Fx.error("删除失败", r.message(), null);
                                 refreshAll.run();
+                            });
+                }),
+                mi("删除远程标签…", () -> {
+                    String remote = Dialogs.chooseRemote(repo());
+                    if (remote == null) return;
+                    if (!Fx.confirm("删除远程标签", "确定删除远程 " + remote + " 上的标签 " + n.info.name + "?")) return;
+                    Fx.bg("删除远程标签…", () -> org.easygit.core.NativeGit.deleteRemoteTag(repo(), remote, n.info.name),
+                            r -> {
+                                UiLog.op("git push " + remote + " :refs/tags/" + n.info.name
+                                                + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
+                                if (r.ok()) Fx.status("已删除远程标签 " + n.info.name);
+                                else Fx.error("删除失败", r.message(), null);
                             });
                 })
         );

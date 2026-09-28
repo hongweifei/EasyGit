@@ -335,6 +335,31 @@ public final class Dialogs {
         });
     }
 
+    // ---------- 选择远程 ----------
+
+    /** 选择一个远程;无远程时引导添加。取消返回 null。 */
+    public static String chooseRemote(Path repo) {
+        var remotes = NativeGit.remotes(repo);
+        if (remotes.isEmpty()) {
+            if (!Fx.confirm("没有远程", "该仓库还没有配置远程。是否现在添加?")) return null;
+            remoteManageDialog(null, repo, () -> {});
+            remotes = NativeGit.remotes(repo);
+            if (remotes.isEmpty()) return null;
+        }
+        ComboBox<String> combo = new ComboBox<>(FXCollections.observableArrayList(remotes.keySet()));
+        combo.getSelectionModel().selectFirst();
+        combo.setPrefWidth(260);
+        Dialog<String> d = new Dialog<>();
+        d.setTitle("选择远程");
+        d.setHeaderText("选择要使用的远程");
+        VBox root = new VBox(8, new Label("远程:"), combo);
+        root.setPadding(new Insets(8));
+        d.getDialogPane().setContent(root);
+        d.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
+        d.setResultConverter(bt -> bt == ButtonType.OK ? combo.getValue() : null);
+        return d.showAndWait().orElse(null);
+    }
+
     // ---------- 撤回到某个提交 ----------
 
     /** 把当前分支重置到指定提交(soft/mixed/hard)。 */

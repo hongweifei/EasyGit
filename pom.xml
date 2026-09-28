@@ -6,7 +6,7 @@
 
     <groupId>org.easygit</groupId>
     <artifactId>easygit</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
     <packaging>jar</packaging>
     <name>EasyGit</name>
     <description>原生 JavaFX Git 桌面客户端(高性能)</description>

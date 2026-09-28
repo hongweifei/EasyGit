@@ -246,6 +246,20 @@ public final class NativeGit {
         return GitProcess.in(repo).execNet("push", remote, "--delete", branch);
     }
 
+    // ---------- 标签推送 ----------
+
+    public static GitProcess.GitResult pushTag(Path repo, String remote, String tag) {
+        return GitProcess.in(repo).execNet("push", remote, "refs/tags/" + tag + ":refs/tags/" + tag);
+    }
+
+    public static GitProcess.GitResult pushAllTags(Path repo, String remote) {
+        return GitProcess.in(repo).execNet("push", remote, "--tags");
+    }
+
+    public static GitProcess.GitResult deleteRemoteTag(Path repo, String remote, String tag) {
+        return GitProcess.in(repo).execNet("push", remote, ":refs/tags/" + tag);
+    }
+
     public static String headSha(Path repo) {
         GitProcess.GitResult r = GitProcess.in(repo).exec("rev-parse", "HEAD");
         return r.ok() ? r.out().strip() : "";
