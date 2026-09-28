@@ -1,4 +1,4 @@
-# EasyGit 桌面打包脚本:生成自包含的 dist\EasyGit\EasyGit.exe
+﻿# EasyGit 桌面打包脚本:生成自包含的 dist\EasyGit\EasyGit.exe
 # 需要:JDK 21(含 jpackage)、Maven、系统 git
 $ErrorActionPreference = 'Stop'
 try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
@@ -9,7 +9,11 @@ try {
     mvn -q package -DskipTests
     if ($LASTEXITCODE -ne 0) { throw "Maven 构建失败" }
 
-    $version = "0.1.1"
+    # 版本号自动从 pom.xml 读取,避免脚本与 pom 脱节
+    [xml]$pomXml = Get-Content pom.xml -Raw
+    $version = [string]$pomXml.project.version
+    if (-not $version) { throw "无法从 pom.xml 读取版本号" }
+    Write-Host "==> 版本: $version" -ForegroundColor Cyan
     # 只把最终 jar 放进 jpackage 输入目录(target 里还有旧版本/中间产物,不能全拷)
     $stage = Join-Path $env:TEMP "easygit-jpackage-input"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }

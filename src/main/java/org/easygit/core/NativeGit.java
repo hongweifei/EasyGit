@@ -296,6 +296,19 @@ public final class NativeGit {
         return out;
     }
 
+    /** 当前分支尚未推送到上游的提交 SHA 集合(无上游/失败时为空集)。 */
+    public static java.util.Set<String> unpushedShas(Path repo, int max) {
+        try {
+            GitProcess.GitResult up = GitProcess.in(repo).exec("rev-parse", "--abbrev-ref",
+                    "--symbolic-full-name", "@{upstream}");
+            if (up.ok() && !up.out().isBlank()) {
+                return java.util.Set.copyOf(revListShas(repo, up.out().strip() + "..HEAD", max));
+            }
+        } catch (Exception ignored) {
+        }
+        return java.util.Set.of();
+    }
+
     // ---------- git config ----------
 
     /** 读取作用域内的全部配置行("key=value")。global=false 时需要 repo。 */

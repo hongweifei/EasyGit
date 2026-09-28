@@ -267,6 +267,7 @@ public class MainWindow {
 
     /** 工具栏合并对话框用的分支快照(在刷新时保存)。 */
     private List<BranchInfo> snapshotBranches = List.of();
+    private String lastHeadSha;
 
     private void network(String busyLabel, java.util.function.Supplier<GitProcess.GitResult> work) {
         Path repo = RepoManager.get().current();
@@ -364,6 +365,7 @@ public class MainWindow {
         // 切换到不同仓库时:立即清掉上一个仓库的内容与 Blame 页签
         if (!repo.toString().equals(loadedRepoPath)) {
             loadedRepoPath = repo.toString();
+            lastHeadSha = null;
             tabs.getTabs().removeIf(t -> t.getText().startsWith("Blame:"));
             changesPanel.clearDiffView();
             historyPanel.setCommits(List.of());
@@ -393,9 +395,11 @@ public class MainWindow {
                 stashes = List.of();
             }
             int[] lfs = org.easygit.core.LfsService.cachedRepoState(repo); // 命中缓存约 0ms
-            return new RefreshData(st, branches, stashes, lfs[0] == 1, lfs[1]);
+            String head = NativeGit.headSha(repo);
+            return new RefreshData(st, branches, stashes, lfs[0] == 1, lfs[1], head);
         }, data -> {
             if (data == null) return;
+            lastHeadSha = data.head();
             currentStatus = data.status;
             snapshotBranches = data.branches;
             changesPanel.refresh(data.status);
@@ -423,18 +427,7 @@ public class MainWindow {
             } catch (Exception ignored) {
                 // 空仓库没有提交
             }
-            Set<String> unpushed = Set.of();
-            try {
-                var up = GitProcess.in(repo).exec("rev-parse", "--abbrev-ref",
-                        "--symbolic-full-name", "@{upstream}");
-                if (up.ok() && !up.out().isBlank()) {
-                    unpushed = Set.copyOf(NativeGit.revListShas(repo,
-                            up.out().strip() + "..HEAD", maxCommits));
-                }
-            } catch (Exception ignored) {
-                // 无上游/分离 HEAD:不标记
-            }
-            return new HistoryData(log, unpushed);
+            return new HistoryData(log, NativeGit.unpushedShas(repo, maxCommits));
         }, data -> {
             GraphBuilder.build(data.log());
             historyPanel.setCommits(data.log(), data.unpushed());
@@ -446,23 +439,31 @@ public class MainWindow {
         if (repo == null) return;
         Fx.bg("刷新状态…", () -> {
             try {
-                return NativeGit.status(repo);
+                String head = NativeGit.headSha(repo);
+                StatusResult st = NativeGit.status(repo);
+                return new LightData(st, head);
             } catch (Exception ex) {
                 UiLog.line("✖ 读取仓库状态失败: " + ex.getMessage());
                 return null;
             }
-        }, st -> {
-            if (st == null) return;
-            currentStatus = st;
-            changesPanel.refresh(st);
+        }, data -> {
+            if (data == null) return;
+            // HEAD 变化(新提交/amend/检出)→ 自动重载历史
+            if (lastHeadSha == null || !data.head().equals(lastHeadSha)) {
+                lastHeadSha = data.head();
+                historyPanel.refresh();
+            }
+            currentStatus = data.st();
+            changesPanel.refresh(data.st());
             int staged = 0, unstaged = 0, untracked = 0, conflicts = 0;
-            for (var f : st.changes()) {
+            for (var f : data.st().changes()) {
                 if (f.unmerged) conflicts++;
                 else if (f.untracked) untracked++;
                 if (f.indexState != ' ' && f.indexState != '?') staged++;
                 if (!f.untracked && !f.unmerged && f.wtState != ' ') unstaged++;
             }
-            statusBar.updateRepo(repo.toString(), st.branch(), st.detached(), st.ahead(), st.behind());
+            statusBar.updateRepo(repo.toString(), data.st().branch(), data.st().detached(),
+                    data.st().ahead(), data.st().behind());
             statusBar.updateCounts(staged, unstaged, untracked, conflicts);
         });
     }
@@ -484,7 +485,9 @@ public class MainWindow {
     }
 
     private record RefreshData(StatusResult status, List<BranchInfo> branches,
-                               List<StashEntry> stashes, boolean lfsUsed, int lfsCount) {}
+                               List<StashEntry> stashes, boolean lfsUsed, int lfsCount, String head) {}
 
     private record HistoryData(List<CommitEntry> log, java.util.Set<String> unpushed) {}
+
+    private record LightData(StatusResult st, String head) {}
 }

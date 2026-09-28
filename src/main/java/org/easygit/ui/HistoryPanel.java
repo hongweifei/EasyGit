@@ -167,6 +167,8 @@ public class HistoryPanel extends VBox {
         list.getSelectionModel().select(target); // 触发监听器加载详情
     }
 
+    private int histSeq = 0;
+
     public void refresh() {
         Path r = repo();
         if (r == null) {
@@ -174,9 +176,23 @@ public class HistoryPanel extends VBox {
             detail.clear();
             return;
         }
-        Fx.bg("读取提交历史…", () -> org.easygit.core.NativeGit.log(r, org.easygit.core.AppSettings.get().maxCommits(),
-                allBranches.isSelected(), null, pathFilter), commits -> setCommits(commits));
+        final int seq = ++histSeq; // 防止并发的多次加载乱序覆盖
+        Fx.bg("读取提交历史…", () -> {
+            List<CommitEntry> log = org.easygit.core.NativeGit.log(r,
+                    org.easygit.core.AppSettings.get().maxCommits(),
+                    allBranches.isSelected(), null, pathFilter);
+            // 未推送集合随历史一起重算,保证 ↑ 标记始终准确
+            java.util.Set<String> unpushed =
+                    org.easygit.core.NativeGit.unpushedShas(r,
+                            org.easygit.core.AppSettings.get().maxCommits());
+            return new HistoryLoad(log, unpushed);
+        }, data -> {
+            if (seq != histSeq) return;
+            setCommits(data.log(), data.unpushed());
+        });
     }
+
+    private record HistoryLoad(List<CommitEntry> log, java.util.Set<String> unpushed) {}
 
     private static MenuItem mi(String text, Runnable action) {
         MenuItem mi = new MenuItem(text);
