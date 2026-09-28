@@ -159,13 +159,7 @@ public class RepoPanel extends VBox {
                     String g = askGroup();
                     if (g != null) RepoManager.get().setRepoGroup(e.path(), g);
                 }),
-                mi("在资源管理器中显示", () -> {
-                    try {
-                        new ProcessBuilder("explorer.exe", "/select," + e.path()).start();
-                    } catch (Exception ex) {
-                        Fx.error("打开失败", ex.getMessage(), null);
-                    }
-                }),
+                mi("在文件管理器中显示", () -> revealInFileManager(e.path())),
                 mi("复制路径", () -> {
                     javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
                     cc.putString(e.path());
@@ -201,6 +195,36 @@ public class RepoPanel extends VBox {
             if (v == null || v.isBlank() || v.equals("(未分组)")) return "";
             return v.strip();
         }).orElse(null);
+    }
+
+    /** 跨平台定位文件:Windows 资源管理器 / macOS Finder / Linux 文件管理器。 */
+    private static void revealInFileManager(String path) {
+        java.io.File file = new java.io.File(path);
+        // 首选 Java 桌面 API(macOS/Windows/Linux 桌面环境均支持)
+        try {
+            if (java.awt.Desktop.isDesktopSupported()) {
+                java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
+                if (desktop.isSupported(java.awt.Desktop.Action.BROWSE_FILE_DIR)) {
+                    desktop.browseFileDirectory(file);
+                    return;
+                }
+            }
+        } catch (Exception ignored) {
+            // 继续走命令行兜底
+        }
+        try {
+            String os = System.getProperty("os.name", "").toLowerCase();
+            if (os.contains("win")) {
+                new ProcessBuilder("explorer.exe", "/select," + path).start();
+            } else if (os.contains("mac")) {
+                new ProcessBuilder("open", "-R", path).start();
+            } else {
+                java.io.File parent = file.getParentFile();
+                new ProcessBuilder("xdg-open", (parent != null ? parent : file).getAbsolutePath()).start();
+            }
+        } catch (Exception ex) {
+            Fx.error("打开失败", ex.getMessage(), null);
+        }
     }
 
     private static MenuItem mi(String text, Runnable action) {

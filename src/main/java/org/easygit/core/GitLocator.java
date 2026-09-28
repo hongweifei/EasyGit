@@ -21,6 +21,11 @@ public final class GitLocator {
 
     private GitLocator() {}
 
+    /** 当前是否为 Windows。 */
+    public static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("windows");
+    }
+
     public static synchronized void reset() {
         exe = null;
         envDirs = List.of();
@@ -83,6 +88,20 @@ public final class GitLocator {
             if (lad != null) candidates.add(Path.of(lad, "Programs", "Git"));
             for (Path c : candidates) {
                 if (tryInstall(c)) return;
+            }
+        } else {
+            // macOS(Homebrew Intel/ARM、MacPorts)、Linux 常见位置
+            for (String p : List.of(
+                    "/opt/homebrew/bin/git",
+                    "/usr/local/bin/git",
+                    "/opt/local/bin/git",
+                    "/usr/bin/git",
+                    "/bin/git")) {
+                Path g = Path.of(p);
+                if (Files.isRegularFile(g) && works(g)) {
+                    accept(g, guessInstall(g));
+                    return;
+                }
             }
         }
 

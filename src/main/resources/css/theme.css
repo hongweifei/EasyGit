@@ -20,7 +20,10 @@
     -sel: #dbeafe;
 
     -fx-background-color: -bg;
-    -fx-font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    /* 跨平台字体链:Windows / macOS / Linux 依次回退 */
+    -fx-font-family: "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans GB",
+                     "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
+                     "Segoe UI", "Helvetica Neue", sans-serif;
     -fx-font-size: 13px;
     -fx-text-fill: -fg;
 }
@@ -190,7 +193,7 @@
 
 .label.h1 { -fx-font-size: 22px; -fx-font-weight: bold; }
 .label.h2 { -fx-font-size: 15px; -fx-font-weight: bold; }
-.mono { -fx-font-family: "Consolas", monospace; }
+.mono { -fx-font-family: "Consolas", "Menlo", "DejaVu Sans Mono", "Noto Sans Mono", monospace; }
 
 /* ---------- 徽标 / 状态 ---------- */
 
@@ -208,7 +211,7 @@
 .chip-unpushed { -fx-background-color: -amber-soft; -fx-text-fill: -amber; -fx-font-weight: bold; }
 
 .status-letter {
-    -fx-font-family: "Consolas", monospace;
+    -fx-font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace;
     -fx-font-weight: bold;
     -fx-alignment: center;
     -fx-min-width: 18;

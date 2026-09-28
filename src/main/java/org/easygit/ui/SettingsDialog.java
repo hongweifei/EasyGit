@@ -182,7 +182,10 @@ public final class SettingsDialog {
         maxCommits.setPromptText("如 2000");
 
         TextField gitPath = new TextField(s.gitPath());
-        gitPath.setPromptText("留空=自动探测(Git Bash 优先),如 C:\\Program Files\\Git\\cmd\\git.exe");
+        String gitPathHint = org.easygit.core.GitLocator.isWindows()
+                ? "留空=自动探测(Git Bash 优先),如 C:\\Program Files\\Git\\cmd\\git.exe"
+                : "留空=自动探测,如 /usr/bin/git 或 /opt/homebrew/bin/git";
+        gitPath.setPromptText(gitPathHint);
         HBox.setHgrow(gitPath, Priority.ALWAYS);
 
         Label note = new Label("说明:git 路径修改后立即生效;主题立即生效;历史条数下次刷新生效。");

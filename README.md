@@ -36,26 +36,50 @@ git 可执行文件**优先使用 Git for Windows(Git Bash)**:自动按 注册�
 - Maven 3.9+
 - 系统安装 git CLI(需要 2.x,基本任何现代版本均可)
 
+## 跨平台支持
+
+Windows / macOS / Linux 三平台可用,核心不依赖任何平台专有 API:
+
+| 能力 | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| 运行 / 开发 | `mvn javafx:run` | 同左 | 同左 |
+| git 探测 | 注册表 + `C:\Program Files\Git`(Git Bash 优先)+ PATH | `/opt/homebrew/bin`、`/usr/local/bin`、`/opt/local/bin`、`/usr/bin` + PATH | 同 macOS |
+| 网络操作凭据 | Git Credential Manager 弹窗 | 系统钥匙串/`git-credential-osxkeychain` | `git-credential-libsecret`/缓存 |
+| 在文件管理器中显示 | 资源管理器 | Finder(`open -R`) | `xdg-open`(优先用 Java Desktop API) |
+| 打包 | `.\package.ps1` → `.exe` | `./package.sh` → app-image / `TYPE=dmg` | `./package.sh` → app-image / `TYPE=deb`、`TYPE=rpm` |
+| 界面字体 | 微软雅黑 / Segoe UI | PingFang SC | Noto Sans CJK / 文泉驿 |
+
+说明:
+
+- 设置文件统一在 `~/.easygit/settings.json`,不区分平台
+- 仓库内换行符由 `.gitattributes` 统一(`* text=auto eol=lf`,Windows 脚本保持 CRLF)
+- macOS/Linux 打包需 JDK 自带的 `jpackage`;生成 `dmg`/`deb`/`rpm` 时分别需要系统自带工具(hdiutil / dpkg-deb / rpmbuild),`app-image` 无额外依赖
+
 ## 运行
 
-```powershell
+```bash
 mvn javafx:run          # 开发模式直接启动
 ```
 
 或构建 fat jar 后运行:
 
-```powershell
+```bash
 mvn package -DskipTests
-java -jar target\easygit-0.1.0.jar
+java -jar target/easygit-<版本>.jar     # Windows 用 target\easygit-<版本>.jar
 ```
 
 ## 打包桌面应用
 
 ```powershell
-.\package.ps1           # 生成 dist\EasyGit\EasyGit.exe(自包含运行时)
+.\package.ps1           # Windows:生成 dist\EasyGit\EasyGit.exe(自包含运行时)
 ```
 
-需要安装 JDK 自带的 `jpackage`(JDK 21 默认包含)。
+```bash
+./package.sh            # macOS / Linux:生成 dist/ 应用镜像
+TYPE=dmg ./package.sh   # macOS 也支持 dmg;Linux 可用 TYPE=deb / TYPE=rpm
+```
+
+打包脚本会自动从 `pom.xml` 读取版本号;需要 JDK 自带的 `jpackage`(JDK 21 默认包含)。
 
 ## 测试
 
