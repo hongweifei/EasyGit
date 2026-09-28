@@ -21,6 +21,8 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.StrokeLineCap;
+import javafx.scene.shape.StrokeLineJoin;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -41,6 +43,13 @@ public class HistoryPanel extends VBox {
     private static final double MIN_GRAPH_W = 70;
     /** 图列宽度上限，避免泳道过多时把提交信息挤没。 */
     private static final double MAX_GRAPH_W = 260;
+    /**
+     * 泳道左侧留白。lane 0 的泳道中心本身在 x=6，而节点外还要画 HEAD 外圈
+     * (半径 7.6 + 半个线宽)，不留白时外圈左缘到 -2.4px，会被画布左边缘裁掉一块。
+     */
+    private static final double GRAPH_PAD_X = 5;
+    /** HEAD 节点外圈颜色。 */
+    private static final Color HEAD_RING = Color.web("#d29922");
     /** 图列当前宽度：由 setCommits 依据最大泳道算出。 */
     private double graphW = MIN_GRAPH_W;
 
@@ -190,7 +199,7 @@ public class HistoryPanel extends VBox {
             }
         }
         // laneX(maxLane) 是泳道中心，右侧再留半个泳道宽 + 2px 余量
-        double need = GraphBuilder.laneX(maxLane, LANE_W) + LANE_W / 2.0 + 2;
+        double need = GraphBuilder.laneX(maxLane, LANE_W) + LANE_W / 2.0 + GRAPH_PAD_X + 2;
         double w = Math.min(MAX_GRAPH_W, Math.max(MIN_GRAPH_W, need));
         if (Math.abs(w - graphW) > 0.5) {
             graphW = w;
@@ -296,42 +305,63 @@ public class HistoryPanel extends VBox {
 
         private void drawGraph(javafx.scene.canvas.GraphicsContext g, CommitEntry c) {
             g.clearRect(0, 0, graphW, ROW_H);
-            double h = ROW_H;
-            double mid = h / 2.0;
-            g.setLineWidth(2);
+            final double h = ROW_H;
+            final double mid = h / 2.0;
+            // JavaFX Canvas 默认即抗锯齿
+            g.setLineWidth(1.6);
             g.setLineDashes(null);
+            // 圆头端点 + 圆角连接：平头端点在行边界只剩半像素，抗锯齿后会留下
+            // 一道浅缝，看上去就像线条"没接上"；圆头端点让上下两行的线段自然重叠。
+            g.setLineCap(StrokeLineCap.ROUND);
+            g.setLineJoin(StrokeLineJoin.ROUND);
 
             for (int[] e : c.edges) {
                 int a = e[0], b = e[1];
-                Color color = colorOf(b == -1 ? a : b);
-                g.setStroke(color);
+                g.setStroke(colorOf(b == -1 ? a : b));
                 if (b == -1) {
-                    // 从上方弯入节点
-                    g.strokeLine(laneX(a), 0, laneX(c.lane), mid);
+                    // 上方泳道弯入本节点：起点切线竖直(与上一行无缝相接)，
+                    // 终点切线水平(平滑汇入节点)
+                    double x0 = laneX(a), x1 = laneX(c.lane);
+                    g.beginPath();
+                    g.moveTo(x0, 0);
+                    g.quadraticCurveTo(x0, mid, x1, mid);
+                    g.stroke();
                 } else if (a == b) {
                     // 与节点无关的贯穿泳道
                     g.strokeLine(laneX(a), 0, laneX(a), h);
                 } else {
-                    // 从节点弯向下方泳道
-                    g.strokeLine(laneX(a), mid, laneX(b), h);
+                    // 由节点弯向下方泳道：起点切线水平(平滑分出)，
+                    // 终点切线竖直(与下一行无缝相接)
+                    double x0 = laneX(a), x1 = laneX(b);
+                    g.beginPath();
+                    g.moveTo(x0, mid);
+                    g.quadraticCurveTo(x1, mid, x1, h);
+                    g.stroke();
                 }
             }
             // 节点自身的竖线:上方来自 incoming,下方去往第一父
-            g.setStroke(colorOf(c.lane));
+            Color own = colorOf(c.lane);
+            g.setStroke(own);
             if (c.hasIncoming) {
                 g.strokeLine(laneX(c.lane), 0, laneX(c.lane), mid);
             }
+            // 第一父沿本道继续，画下方竖线保证泳道连贯性
             if (!c.parents.isEmpty()) {
                 g.strokeLine(laneX(c.lane), mid, laneX(c.lane), h);
             }
-            // 节点
-            g.setFill(colorOf(c.lane));
+            // 节点：实心圆 + 略深的描边(两种主题下都有轮廓感)
             double x = laneX(c.lane);
-            g.fillOval(x - 4.5, mid - 4.5, 9, 9);
+            double r = 5.0;
+            g.setFill(own);
+            g.fillOval(x - r, mid - r, r * 2, r * 2);
+            g.setStroke(own.deriveColor(0, 1.0, 0.72, 1.0));
+            g.setLineWidth(1.0);
+            g.strokeOval(x - r, mid - r, r * 2, r * 2);
             if (c.isHead()) {
-                g.setStroke(Color.web("#d29922"));
-                g.setLineWidth(2);
-                g.strokeOval(x - 6.5, mid - 6.5, 13, 13);
+                g.setStroke(HEAD_RING);
+                g.setLineWidth(1.6);
+                double rr = r + 2.6;
+                g.strokeOval(x - rr, mid - rr, rr * 2, rr * 2);
             }
         }
     }
@@ -340,7 +370,8 @@ public class HistoryPanel extends VBox {
         return PALETTE[Math.floorMod(lane, PALETTE.length)];
     }
 
+    /** 泳道 x 坐标(渲染用，含左侧留白)。 */
     private static double laneX(int lane) {
-        return GraphBuilder.laneX(lane, LANE_W);
+        return GraphBuilder.laneX(lane, LANE_W) + GRAPH_PAD_X;
     }
 }
