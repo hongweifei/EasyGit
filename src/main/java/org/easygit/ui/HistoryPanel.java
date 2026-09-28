@@ -37,6 +37,12 @@ public class HistoryPanel extends VBox {
 
     private static final double LANE_W = 12;
     private static final double ROW_H = 44;
+    /** 图列最小宽度(约 5 条泳道)。实际宽度按当前历史的最大泳道自适应。 */
+    private static final double MIN_GRAPH_W = 70;
+    /** 图列宽度上限，避免泳道过多时把提交信息挤没。 */
+    private static final double MAX_GRAPH_W = 260;
+    /** 图列当前宽度：由 setCommits 依据最大泳道算出。 */
+    private double graphW = MIN_GRAPH_W;
 
     private final ListView<CommitEntry> list = new ListView<>();
     private final CommitDetailPanel detail = new CommitDetailPanel();
@@ -151,6 +157,7 @@ public class HistoryPanel extends VBox {
     /** 带未推送标记的注入。默认选中第一条(最新提交);已有选择且仍存在时保持。 */
     public void setCommits(List<CommitEntry> commits, java.util.Set<String> unpushed) {
         unpushedIds = unpushed == null ? java.util.Set.of() : unpushed;
+        updateGraphWidth(commits);
         CommitEntry prev = list.getSelectionModel().getSelectedItem();
         list.getItems().setAll(commits);
         if (commits.isEmpty()) {
@@ -165,6 +172,30 @@ public class HistoryPanel extends VBox {
         }
         if (target == null) target = commits.get(0);
         list.getSelectionModel().select(target); // 触发监听器加载详情
+    }
+
+    /**
+     * 依据当前历史里出现过的最大泳道号调整图列宽度。
+     * 原来是固定 70px，而 laneX(lane)=lane*12+6，第 6 条泳道(78px)起就被 Canvas 裁掉，
+     * 于是右侧泳道的竖线与节点凭空消失，看起来就是"线条连不上"。
+     */
+    private void updateGraphWidth(List<CommitEntry> commits) {
+        int maxLane = 0;
+        for (CommitEntry c : commits) {
+            maxLane = Math.max(maxLane, c.lane);
+            if (c.edges == null) continue;
+            for (int[] e : c.edges) {
+                maxLane = Math.max(maxLane, e[0]);
+                if (e[1] >= 0) maxLane = Math.max(maxLane, e[1]);
+            }
+        }
+        // laneX(maxLane) 是泳道中心，右侧再留半个泳道宽 + 2px 余量
+        double need = GraphBuilder.laneX(maxLane, LANE_W) + LANE_W / 2.0 + 2;
+        double w = Math.min(MAX_GRAPH_W, Math.max(MIN_GRAPH_W, need));
+        if (Math.abs(w - graphW) > 0.5) {
+            graphW = w;
+            list.refresh(); // 让已渲染的单元格用新宽度重画
+        }
     }
 
     private int histSeq = 0;
@@ -224,7 +255,7 @@ public class HistoryPanel extends VBox {
                 setContextMenu(null);
                 return;
             }
-            Canvas canvas = new Canvas(70, ROW_H);
+            Canvas canvas = new Canvas(graphW, ROW_H);
             drawGraph(canvas.getGraphicsContext2D(), c);
 
             Label subject = new Label(c.subject);
@@ -264,7 +295,7 @@ public class HistoryPanel extends VBox {
         }
 
         private void drawGraph(javafx.scene.canvas.GraphicsContext g, CommitEntry c) {
-            g.clearRect(0, 0, 70, ROW_H);
+            g.clearRect(0, 0, graphW, ROW_H);
             double h = ROW_H;
             double mid = h / 2.0;
             g.setLineWidth(2);
