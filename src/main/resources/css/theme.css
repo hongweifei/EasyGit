@@ -299,6 +299,25 @@
 
 /* ---------- 历史图 ---------- */
 
+/* commit 单元格的选中/悬停高亮。
+   注意：这两条必须写成与下方基础规则等长的选择器——基础规则
+   `.list-view > .virtual-flow > .clipped-container > .sheet > .list-cell`
+   权重是 (0,6,0)，只写 `.list-cell.commit-cell` (0,2,0) 会被它盖掉而失效。 */
+.list-view > .virtual-flow > .clipped-container > .sheet > .list-cell.commit-cell:filled:hover {
+    -fx-background-color: derive(-sel, 30%);
+}
+.list-view > .virtual-flow > .clipped-container > .sheet > .list-cell.commit-cell:filled:selected {
+    -fx-background-color: -sel;
+}
+/* 选中行左侧的 accent 竖条。宽度始终占位(未选中时透明)，
+   否则选中瞬间整行内容会被推右 4px，产生跳动。 */
+.list-cell.commit-cell .graph-container {
+    -fx-border-width: 0 0 0 4;
+    -fx-border-color: transparent;
+}
+.list-cell.commit-cell:filled:selected .graph-container {
+    -fx-border-color: transparent transparent transparent -accent;
+}
 .commit-subject { -fx-font-weight: bold; }
 .commit-meta { -fx-text-fill: -fg-dim; -fx-font-size: 11px; }
 .commit-body { -fx-padding: 2 0 2 0; }

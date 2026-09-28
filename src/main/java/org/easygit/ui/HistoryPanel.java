@@ -209,6 +209,13 @@ public class HistoryPanel extends VBox {
     // ---------- 渲染 ----------
 
     private class CommitCell extends javafx.scene.control.ListCell<CommitEntry> {
+
+        CommitCell() {
+            // 与 theme.css 的 .list-cell.commit-cell 规则配套。缺了这个样式类，
+            // 整套选中高亮规则都不会命中(此前就是如此，属于死 CSS)。
+            getStyleClass().add("commit-cell");
+        }
+
         @Override
         protected void updateItem(CommitEntry c, boolean empty) {
             super.updateItem(c, empty);
@@ -251,6 +258,7 @@ public class HistoryPanel extends VBox {
             HBox.setHgrow(textBox, Priority.ALWAYS);
 
             HBox box = new HBox(canvas, textBox);
+            box.getStyleClass().add("graph-container");
             box.setAlignment(Pos.CENTER_LEFT);
             setGraphic(box);
         }
