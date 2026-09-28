@@ -64,8 +64,8 @@ public final class AppSettings {
                 windowH = o.optDouble("windowH", 800);
                 gitPath = o.optString("gitPath", "");
             }
-        } catch (Exception e) {
-            System.err.println("读取设置失败: " + e.getMessage());
+        } catch (Throwable t) {
+            System.err.println("读取设置失败: " + t);
         }
     }
 
@@ -86,8 +86,9 @@ public final class AppSettings {
             o.put("windowH", windowH);
             o.put("gitPath", gitPath);
             Files.writeString(FILE, o.toString(2), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            System.err.println("保存设置失败: " + e.getMessage());
+        } catch (Throwable t) {
+            // 含 NoClassDefFoundError 等 Error:设置保存失败不应影响退出流程
+            System.err.println("保存设置失败: " + t);
         }
     }
 
