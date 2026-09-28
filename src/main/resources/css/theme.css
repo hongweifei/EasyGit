@@ -18,6 +18,18 @@
     -purple: #8250df;
     -purple-soft: #fbefff;
     -sel: #dbeafe;
+    /* diff 行选中时的底色：由 soft 色向 -sel 靠拢，保证与相邻未选中行可辨 */
+    -green-sel: #c3f0cd;
+    -red-sel: #ffd9d5;
+    -accent-sel: #c2e9ff;
+
+    /* 钉死 Modena 的"文字色变量"。
+       Modena 用 ladder(-fx-background, …) 推导控件文字色,而选中行会把
+       -fx-background 换成 -fx-selection-bar(亮色下即 -fx-accent #0096C9,
+       亮度约 26% < 45% 阈值)→ 嵌套 Label 的文字直接变白;
+       但我们实际绘制的行底色仍是浅色(增删行底纹 / -sel),于是白字看不见。
+       这里把它固定为 -fg,一次性消除整类故障(diff 行、历史、文件列表等)。 */
+    -fx-text-background-color: -fg;
 
     -fx-background-color: -bg;
     /* 跨平台字体链:Windows / macOS / Linux 依次回退 */
@@ -48,6 +60,9 @@
     -purple: #a371f7;
     -purple-soft: #2d2247;
     -sel: #2d4a6b;
+    -green-sel: #1e4d2b;
+    -red-sel: #6a2b2c;
+    -accent-sel: #24486e;
 
     /* 桥接 Modena 内部变量:控件默认文字色由 -fx-background 亮度推导,
        不覆盖它的话暗色背景上仍是深色文字(看不清的主因) */
@@ -244,12 +259,37 @@
 
 /* ---------- Diff ---------- */
 
-.diff-row { -fx-padding: 0; -fx-text-fill: -fg; }
-.diff-add { -fx-background-color: -green-soft; -fx-text-fill: -fg; }
-.diff-del { -fx-background-color: -red-soft; -fx-text-fill: -fg; }
-.diff-ctx { -fx-background-color: transparent; -fx-text-fill: -fg; }
-.diff-hunk { -fx-background-color: -accent-soft; -fx-text-fill: -accent; }
-.diff-no { -fx-text-fill: -fg-dim; -fx-padding: 0 6 0 0; }
+/* 关键：文字色规则必须直接命中嵌套 Label。
+   Modena 的 `.label { -fx-text-fill: -fx-text-background-color }` 是对 Label 的
+   直接匹配，而写在父 HBox 上的 -fx-text-fill 只是"继承值"——JavaFX 里继承值
+   输给任何直接匹配规则，所以旧写法在 Label 上根本不生效，文字色仍由 Modena 的
+   ladder(-fx-background) 推导：选中+聚焦时 -fx-background = -fx-selection-bar
+   (#0096C9，亮度 26% < 45% 阈值) → 推导成白色，而实际行底色是浅色 → 白字看不见。 */
+.diff-row {
+    -fx-padding: 0;
+    -fx-border-width: 0 0 0 2;
+    -fx-border-color: transparent;
+}
+.diff-row .label { -fx-text-fill: -fg; }
+.diff-add  { -fx-background-color: -green-soft; }
+.diff-del  { -fx-background-color: -red-soft; }
+.diff-ctx  { -fx-background-color: transparent; }
+.diff-hunk { -fx-background-color: -accent-soft; }
+.diff-hunk .label { -fx-text-fill: -accent; }
+/* 与 .diff-* .label 同权重，靠"写在后面"取胜，保证行号仍是暗色 */
+.diff-row .diff-no { -fx-text-fill: -fg-dim; }
+
+/* 选中行：行底色必须显式给出。否则 .diff-* 的底色会盖掉 ListView 的选中底色，
+   点了哪行完全看不出来（只有单元格 padding 漏出一条细缝）。 */
+.diff-list > .virtual-flow > .clipped-container > .sheet > .list-cell { -fx-padding: 0; }
+.list-cell:selected .diff-ctx  { -fx-background-color: -sel; }
+.list-cell:selected .diff-add  { -fx-background-color: -green-sel; }
+.list-cell:selected .diff-del  { -fx-background-color: -red-sel; }
+.list-cell:selected .diff-hunk { -fx-background-color: -accent-sel; }
+.list-cell:selected .diff-row  { -fx-border-color: transparent transparent transparent -accent; }
+.list-cell:selected .diff-file-header { -fx-background-color: -sel; }
+
+.diff-no { -fx-padding: 0 6 0 0; }
 .diff-file-header {
     -fx-background-color: -panel2;
     -fx-text-fill: -fg;

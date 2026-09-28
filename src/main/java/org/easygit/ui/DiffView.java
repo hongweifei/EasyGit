@@ -38,6 +38,7 @@ public class DiffView extends VBox {
     public DiffView() {
         setSpacing(0);
         emptyHint.getStyleClass().add("dim");
+        list.getStyleClass().add("diff-list");
         list.setFixedCellSize(21);
         list.setCellFactory(v -> new Cell());
         list.getItems().addListener((javafx.collections.ListChangeListener<Row>) c -> {
@@ -131,6 +132,7 @@ public class DiffView extends VBox {
             code.getStyleClass().add("mono");
             code.setFont(MONO);
             code.setWrapText(false);
+            lineBox.getStyleClass().add("diff-row");
             lineBox.setSpacing(0);
             lineBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
             HBox.setHgrow(code, Priority.ALWAYS);
@@ -168,19 +170,20 @@ public class DiffView extends VBox {
             oldNo.setPrefWidth(plain ? 0 : 46);
             oldNo.setText(!plain && l.oldNo() > 0 ? String.valueOf(l.oldNo()) : "");
             newNo.setText(l.newNo() > 0 ? String.valueOf(l.newNo()) : "");
+            // 只换类型类；"diff-row" 已在构造时加过一次。
+            // 旧写法每次 updateItem 都 addAll("diff-row", ...)，而 removeAll 不含它，
+            // 单元格被复用时 styleClass 会无限累积成 diff-row diff-row diff-row …
             lineBox.getStyleClass().removeAll("diff-add", "diff-del", "diff-ctx", "diff-hunk");
             switch (l.type()) {
-                case ADD -> lineBox.getStyleClass().addAll("diff-row", "diff-add");
-                case DEL -> lineBox.getStyleClass().addAll("diff-row", "diff-del");
+                case ADD -> lineBox.getStyleClass().add("diff-add");
+                case DEL -> lineBox.getStyleClass().add("diff-del");
                 case HUNK -> {
-                    lineBox.getStyleClass().addAll("diff-row", "diff-hunk");
+                    lineBox.getStyleClass().add("diff-hunk");
                     oldNo.setText("");
                     newNo.setText("");
-                    code.setStyle("-fx-text-fill: -accent;");
                 }
-                default -> lineBox.getStyleClass().addAll("diff-row", "diff-ctx");
+                default -> lineBox.getStyleClass().add("diff-ctx");
             }
-            if (l.type() != LineType.HUNK) code.setStyle("");
             box.getChildren().setAll(lineBox);
             setGraphic(box);
         }
