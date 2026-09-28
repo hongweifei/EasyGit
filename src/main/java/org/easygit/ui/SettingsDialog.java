@@ -31,6 +31,7 @@ public final class SettingsDialog {
 
     public static void show(javafx.stage.Window owner, javafx.scene.layout.Pane themeTarget) {
         Dialog<Void> d = new Dialog<>();
+        Fx.icon(d);
         d.setTitle("设置");
         d.getDialogPane().getButtonTypes().add(javafx.scene.control.ButtonType.CLOSE);
         d.getDialogPane().setPrefSize(720, 560);

@@ -43,6 +43,7 @@ public class ConflictDialog extends Dialog<Void> {
         this.refreshAll = refreshAll;
 
         setTitle("解决冲突");
+        Fx.icon(this);
         setHeaderText("文件 " + cf.path + " 有 " + cf.regions.size() + " 处冲突");
 
         regionList.setItems(FXCollections.observableArrayList(cf.regions));

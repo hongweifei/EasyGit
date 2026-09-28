@@ -24,6 +24,12 @@ public class EasyGitApp extends Application {
                 Fx.error("EasyGit - 未处理异常", String.valueOf(e), sw.toString());
             });
         });
+        // 应用图标(窗口/任务栏)
+        for (String s : new String[]{"icons/icon_16.png", "icons/icon_32.png",
+                "icons/icon_48.png", "icons/icon_256.png"}) {
+            var url = EasyGitApp.class.getResource("/" + s);
+            if (url != null) stage.getIcons().add(new javafx.scene.image.Image(url.toExternalForm()));
+        }
         new MainWindow(stage).show();
     }
 

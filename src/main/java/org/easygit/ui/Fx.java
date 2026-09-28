@@ -74,8 +74,21 @@ public final class Fx {
 
     // ---------- 对话框 ----------
 
+    /** 给对话框的独立窗口挂上应用图标(在 show 之前调用)。 */
+    public static void icon(javafx.scene.control.Dialog<?> d) {
+        d.getDialogPane().sceneProperty().addListener((o, ov, nv) -> {
+            if (nv != null && nv.getWindow() instanceof javafx.stage.Stage st && st.getIcons().isEmpty()) {
+                for (String s : new String[]{"icons/icon_16.png", "icons/icon_32.png", "icons/icon_48.png"}) {
+                    var url = Fx.class.getResource("/" + s);
+                    if (url != null) st.getIcons().add(new javafx.scene.image.Image(url.toExternalForm()));
+                }
+            }
+        });
+    }
+
     public static void error(String title, String message, String detail) {
         Alert a = new Alert(Alert.AlertType.ERROR);
+        icon(a);
         a.setTitle(title);
         a.setHeaderText(message == null ? "" : message);
         if (detail != null && !detail.isBlank()) {
@@ -97,6 +110,7 @@ public final class Fx {
 
     public static void info(String title, String message) {
         Alert a = new Alert(Alert.AlertType.INFORMATION);
+        icon(a);
         a.setTitle(title);
         a.setHeaderText(null);
         a.setContentText(message);
@@ -105,6 +119,7 @@ public final class Fx {
 
     public static boolean confirm(String title, String message) {
         Alert a = new Alert(Alert.AlertType.CONFIRMATION, message, ButtonType.OK, ButtonType.CANCEL);
+        icon(a);
         a.setTitle(title);
         a.setHeaderText(null);
         Optional<ButtonType> r = a.showAndWait();

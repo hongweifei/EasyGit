@@ -57,6 +57,8 @@ public final class Dialogs {
         group.setPrefWidth(220);
 
         Dialog<String[]> d = new Dialog<>();
+
+        Fx.icon(d);
         d.setTitle("添加仓库");
         d.setHeaderText(root.toString());
         VBox rootBox = new VBox(8, new Label("显示名称:"), name, new Label("分组(可选已有或输入新分组):"), group);
@@ -94,6 +96,7 @@ public final class Dialogs {
 
     public static void cloneRepo(javafx.stage.Window owner) {
         Dialog<Path> dialog = new Dialog<>();
+        Fx.icon(dialog);
         dialog.setTitle("克隆仓库");
         dialog.setHeaderText("从 URL 克隆仓库");
         TextField url = new TextField();
@@ -176,6 +179,7 @@ public final class Dialogs {
     /** 返回分支名;取消返回 null。 */
     public static String newBranch(String defaultName) {
         javafx.scene.control.TextInputDialog d = new javafx.scene.control.TextInputDialog(defaultName);
+        Fx.icon(d);
         d.setTitle("新建分支");
         d.setHeaderText("输入新分支名称(将创建并检出)");
         d.setContentText("分支名:");
@@ -184,6 +188,7 @@ public final class Dialogs {
 
     public static String askText(String title, String header, String defaultText) {
         javafx.scene.control.TextInputDialog d = new javafx.scene.control.TextInputDialog(defaultText);
+        Fx.icon(d);
         d.setTitle(title);
         d.setHeaderText(header);
         return d.showAndWait().map(String::strip).filter(s -> !s.isEmpty()).orElse(null);
@@ -197,6 +202,7 @@ public final class Dialogs {
             return;
         }
         Dialog<String> d = new Dialog<>();
+        Fx.icon(d);
         d.setTitle("合并分支");
         d.setHeaderText("选择要合并到当前分支的分支");
         ComboBox<org.easygit.core.model.BranchInfo> combo = new ComboBox<>();
@@ -257,6 +263,8 @@ public final class Dialogs {
         }
 
         Dialog<ButtonType> d = new Dialog<>();
+
+        Fx.icon(d);
         d.setTitle("推送分支到远程");
         d.setHeaderText("选择要推送的分支和目标远程");
 
@@ -350,6 +358,7 @@ public final class Dialogs {
         combo.getSelectionModel().selectFirst();
         combo.setPrefWidth(260);
         Dialog<String> d = new Dialog<>();
+        Fx.icon(d);
         d.setTitle("选择远程");
         d.setHeaderText("选择要使用的远程");
         VBox root = new VBox(8, new Label("远程:"), combo);
@@ -414,6 +423,7 @@ public final class Dialogs {
     /** 远程管理对话框:添加 / 编辑 URL / 重命名 / 删除。 */
     public static void remoteManageDialog(javafx.stage.Window owner, Path repo, Runnable refreshAll) {
         Dialog<Void> d = new Dialog<>();
+        Fx.icon(d);
         d.setTitle("管理远程");
         d.setHeaderText("当前仓库的远程配置");
 
@@ -437,6 +447,7 @@ public final class Dialogs {
             javafx.scene.layout.VBox root = new VBox(8, new Label("名称:"), name, new Label("URL:"), url);
             root.setPadding(new Insets(8));
             Dialog<ButtonType> ad = new Dialog<>();
+            Fx.icon(ad);
             ad.setTitle("添加远程");
             ad.getDialogPane().setContent(root);
             ad.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
@@ -536,6 +547,7 @@ public final class Dialogs {
         VBox root = new VBox(8, new Label("新的提交消息(第一行是标题,空行后是正文):"), ta);
         root.setPadding(new Insets(8));
         Dialog<ButtonType> d = new Dialog<>();
+        Fx.icon(d);
         d.setTitle("修改提交消息");
         d.setHeaderText(c.abbr + "  " + c.subject);
         d.getDialogPane().setContent(root);
@@ -580,6 +592,7 @@ public final class Dialogs {
     /** LFS 状态对话框。 */
     public static void lfsStatusDialog(javafx.stage.Window owner, org.easygit.core.LfsService.LfsInfo info) {
         Dialog<Void> d = new Dialog<>();
+        Fx.icon(d);
         d.setTitle("Git LFS 状态");
         d.setHeaderText("Git LFS");
 
@@ -626,6 +639,7 @@ public final class Dialogs {
     /** LFS 跟踪规则管理(读改 .gitattributes)。 */
     public static void lfsTrackRulesDialog(javafx.stage.Window owner, Path repo, Runnable refreshAll) {
         Dialog<Void> d = new Dialog<>();
+        Fx.icon(d);
         d.setTitle("Git LFS 跟踪规则");
         d.setHeaderText("管理 .gitattributes 中的 LFS 跟踪规则");
 
@@ -695,6 +709,7 @@ public final class Dialogs {
     /** 返回 {名称, 说明};取消返回 null。 */
     public static String[] tag(String defaultTarget) {
         javafx.scene.control.TextInputDialog d = new javafx.scene.control.TextInputDialog("");
+        Fx.icon(d);
         d.setTitle("创建标签");
         d.setHeaderText("为 " + defaultTarget + " 创建标签");
         d.setContentText("标签名:");
