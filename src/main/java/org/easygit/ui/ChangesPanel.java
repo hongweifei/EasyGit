@@ -107,7 +107,7 @@ public class ChangesPanel extends VBox {
         });
         Region viewerSpacer = new Region();
         HBox.setHgrow(viewerSpacer, Priority.ALWAYS);
-        HBox viewerBar = new HBox(6, diffBtn, fileBtn, viewerSpacer);
+        HBox viewerBar = new HBox(6, diffBtn, fileBtn, viewerSpacer, diffView.makeLayoutSwitch());
         viewerBar.setAlignment(Pos.CENTER_LEFT);
 
         VBox viewerBox = new VBox(4, viewerBar, diffView);

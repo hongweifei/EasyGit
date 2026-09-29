@@ -297,6 +297,40 @@
     -fx-border-color: transparent transparent -border transparent;
 }
 
+/* ---------- 并排对照 ---------- */
+
+/* 该侧没有对应行(增删不平衡)时的灰色填充块。
+   选中时保持中性色(不跟 -sel 走),与 GitHub 的做法一致,避免整行糊成一片。 */
+.diff-filler { -fx-background-color: -panel2; }
+/* 两栏中缝:右栏左缘一条细分隔线 */
+.diff-right { -fx-border-color: transparent transparent transparent -border; }
+
+/* 统一/并排切换(分段控件,放在差异视图工具栏右侧) */
+.diff-mode-switch {
+    -fx-border-color: -border;
+    -fx-background-color: -panel2;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+}
+.diff-mode-switch .toggle-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: -fg-dim;
+    -fx-background-radius: 6;
+    -fx-border-color: transparent;
+    -fx-padding: 1 10 1 10;
+    -fx-cursor: hand;
+}
+.diff-mode-switch .toggle-button:hover { -fx-text-fill: -fg; }
+.diff-mode-switch .toggle-button:selected {
+    -fx-background-color: -sel;
+    -fx-text-fill: -accent;
+    -fx-font-weight: bold;
+}
+.diff-mode-switch .toggle-button:disabled {
+    -fx-opacity: 0.45;
+    -fx-cursor: default;
+}
+
 /* ---------- 历史图 ---------- */
 
 /* commit 单元格的选中/悬停高亮。

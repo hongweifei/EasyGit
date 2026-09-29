@@ -141,8 +141,11 @@ public class CommitDetailPanel extends VBox {
         blameBtn.setMinWidth(Control.USE_PREF_SIZE);
         filterBtn.setMinWidth(Control.USE_PREF_SIZE);
         backBtn.setOnAction(e -> backToList());
+        // 差异视图的"统一/并排"切换靠右放置;纯文件模式下 DiffView 内部会自动禁用它
+        Region stateSpacer = new Region();
+        HBox.setHgrow(stateSpacer, Priority.ALWAYS);
         stateBar = new HBox(6, backBtn, vSeparator(), fileBtn, diffBtn,
-                blameBtn, filterBtn);
+                blameBtn, filterBtn, stateSpacer, diffView.makeLayoutSwitch());
         stateBar.setAlignment(Pos.CENTER_LEFT);
 
         // ---- 文件列表条 ----
