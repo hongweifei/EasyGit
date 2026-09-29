@@ -451,6 +451,7 @@ public class ChangesPanel extends VBox {
             if (empty || f == null) {
                 setGraphic(null);
                 setContextMenu(null);
+                setTooltip(null);
                 return;
             }
             String letter = f.shortStatus();
@@ -484,6 +485,8 @@ public class ChangesPanel extends VBox {
                 box.prefWidthProperty().bind(getListView().widthProperty().subtract(30));
             }
             setGraphic(box);
+            // 窄栏里文件名必然被省略号截断(上一行的 chip/按钮还要占位),悬停给全名
+            setTooltip(Fx.tip(f.displayPath()));
 
             ContextMenu menu = new ContextMenu();
             if (f.unmerged) {

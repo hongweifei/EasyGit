@@ -569,7 +569,7 @@ public class CommitDetailPanel extends VBox {
                 box.prefWidthProperty().bind(getListView().widthProperty().subtract(30));
             }
             setGraphic(box);
-            setTooltip(new Tooltip(displayPath(f) + "   +" + f.added + " -" + f.deleted));
+            setTooltip(Fx.tip(displayPath(f) + "   +" + f.added + " -" + f.deleted));
         }
     }
 
@@ -586,7 +586,8 @@ public class CommitDetailPanel extends VBox {
             if (ent.folder()) {
                 setGraphic(new Label("📁 " + ent.name()));
                 setText(null);
-                setTooltip(null);
+                // 合并中间目录后的名字很长(窄栏会被裁),悬停给真实目录路径
+                setTooltip(Fx.tip(ent.fullPath()));
             } else {
                 int depth = (getTreeView() != null && getTreeItem() != null)
                         ? getTreeView().getTreeItemLevel(getTreeItem()) : 0;
@@ -605,7 +606,7 @@ public class CommitDetailPanel extends VBox {
                     box.prefWidthProperty().bind(getTreeView().widthProperty().subtract(46 + depth * 14));
                 }
                 setGraphic(box);
-                setTooltip(new Tooltip(ent.fullPath()));
+                setTooltip(Fx.tip(ent.fullPath()));
             }
         }
     }

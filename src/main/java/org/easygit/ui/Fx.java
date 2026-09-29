@@ -7,10 +7,12 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.util.Duration;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -76,6 +78,18 @@ public final class Fx {
         h.setAlignment(Pos.CENTER_LEFT);
         h.getStyleClass().add("panel-head");
         return h;
+    }
+
+    /**
+     * 列表项提示:文件名/路径在窄栏里会被省略号截断,悬停时用 Tooltip 显示全名。
+     * 延迟统一在这里设 —— JavaFX 默认 1 秒才弹,查名字时太迟钝。
+     * 注意单元格是复用的:非对应行(以及空行)要 {@code setTooltip(null)},否则会挂着上一行的提示。
+     */
+    public static Tooltip tip(String fullText) {
+        Tooltip t = new Tooltip(fullText);
+        t.setShowDelay(Duration.millis(400));
+        t.setHideDelay(Duration.millis(100));
+        return t;
     }
 
     public static void bindStatus(Consumer<String> busy, Consumer<String> message) {

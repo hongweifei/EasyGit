@@ -324,6 +324,7 @@ public class DiffView extends VBox {
             super.updateItem(row, empty);
             if (empty || row == null) {
                 setGraphic(null);
+                setTooltip(null);
                 return;
             }
             if (row.kind() == RowKind.FILE_HEADER) {
@@ -333,8 +334,11 @@ public class DiffView extends VBox {
                 header.setText(f.displayPath() + (stat.isEmpty() ? "" : "   " + stat));
                 box.getChildren().setAll(header);
                 setGraphic(box);
+                // 文件头行显示路径,窄栏会被省略号截断;悬停给全名(单元格复用,别的行必须清掉)
+                setTooltip(Fx.tip(f.displayPath() + (stat.isEmpty() ? "" : "   " + stat)));
                 return;
             }
+            setTooltip(null);
             if (row.kind() == RowKind.PAIR) {
                 // 并排视图:左栏永远只可能是删除/上下文,右栏只可能是新增/上下文
                 setupHalf(lHalf, lNo, lCode, row.left(), true);
