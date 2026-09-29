@@ -79,7 +79,7 @@ public class MainWindow {
         buildHeader();
         root.setCenter(welcome);
 
-        RepoManager.get().addListener(repo -> Platform.runLater(this::refreshAll));
+        RepoManager.get().addListener(repo -> requestRefresh());
 
         // 轻量自动刷新:每 5 秒刷新工作区状态
         Timeline poller = new Timeline(new KeyFrame(Duration.seconds(5), e -> lightRefresh()));
@@ -229,6 +229,8 @@ public class MainWindow {
         AppSettings.get().setWindowSize(
                 Math.max(preMaxW, stage.getMinWidth()),
                 Math.max(preMaxH, stage.getMinHeight()));
+        // 设置是延迟合并落盘的,退出前强制写一次,别把窗口尺寸/当前仓库丢了
+        AppSettings.get().saveNow();
     }
 
     private void toggleTheme() {
@@ -466,18 +468,43 @@ public class MainWindow {
 
     private StatusResult currentStatus;
 
+    /** 已排队的整仓刷新所属仓库代号,-1 表示没有在途的整仓刷新。 */
+    private long refreshingEpoch = -1;
+    /** 切换通知是否已排队(连续切换时把多次通知合并成一次刷新)。 */
+    private boolean refreshQueued;
+
+    /**
+     * 仓库切换通知 -> 合并刷新。
+     * 连续切换仓库时通知会连着来好几条,而每次通知都发起一轮"状态 + 历史"取数;
+     * 合并后只按最终仓库取一次,旧仓库那一轮由 {@link Fx#dropStaleTasks()} 收走。
+     */
+    private void requestRefresh() {
+        if (refreshQueued) return;
+        refreshQueued = true;
+        Platform.runLater(() -> {
+            refreshQueued = false;
+            refreshAll();
+        });
+    }
+
     private void refreshAll() {
-        Path repo = RepoManager.get().current();
+        // 旧仓库还在跑/排队的刷新立刻作废:任务不再启动,结果不再回投
+        Fx.dropStaleTasks();
+        RepoGuard guard = RepoGuard.capture();
+        Path repo = guard.repo();
         if (repo == null) {
             loadedRepoPath = null;
+            refreshingEpoch = -1;
             root.setLeft(null);
             root.setCenter(welcome);
             if (repoSwitcher != null) repoSwitcher.setText("未打开仓库");
             statusBar.updateRepo(null, null, false, 0, 0);
             statusBar.updateCounts(0, 0, 0, 0);
+            statusBar.updateLfs(false, 0);
             refreshWelcomeList();
             return;
         }
+        refreshingEpoch = RepoManager.get().epoch(); // 本轮整仓刷新的代号(轮询期间不再叠加)
         root.setLeft(leftBox);
         if (root.getCenter() != centerCard) root.setCenter(centerCard);
 
@@ -494,18 +521,24 @@ public class MainWindow {
         if (!repo.toString().equals(loadedRepoPath)) {
             loadedRepoPath = repo.toString();
             lastHeadSha = null;
+            currentStatus = null;
             tabs.getTabs().removeIf(t -> t.getText().startsWith("Blame:"));
-            changesPanel.clearDiffView();
-            historyPanel.setCommits(List.of());
+            changesPanel.onRepoSwitched();
+            historyPanel.onRepoSwitched();
             branchPanel.refresh(List.of());
             stashPanel.refresh(List.of());
+            // 状态栏先归零:否则新仓库的数据到位前,下面显示的还是上一个仓库的分支/领先落后
+            statusBar.updateRepo(repo.toString(), null, false, 0, 0);
+            statusBar.updateCounts(0, 0, 0, 0);
+            statusBar.updateLfs(false, 0);
+            Fx.status("已切换到 " + repoName);
         }
 
         boolean allBranches = historyPanel.allBranchesSelected();
         int maxCommits = AppSettings.get().maxCommits();
 
         // 阶段一(快):状态 / 分支 / stash / LFS 缓存状态 —— 让界面先可用
-        Fx.bg("刷新仓库状态…", () -> {
+        Fx.bg("刷新仓库状态…", guard, () -> {
             StatusResult st;
             List<BranchInfo> branches;
             try {
@@ -526,6 +559,7 @@ public class MainWindow {
             String head = NativeGit.headSha(repo);
             return new RefreshData(st, branches, stashes, lfs[0] == 1, lfs[1], head);
         }, data -> {
+            refreshingEpoch = -1;
             if (data == null) return;
             lastHeadSha = data.head();
             currentStatus = data.status;
@@ -548,7 +582,7 @@ public class MainWindow {
         });
 
         // 阶段二(慢,并行):提交历史 + 未推送标记
-        Fx.bg("读取提交历史…", () -> {
+        Fx.bg("读取提交历史…", guard, () -> {
             List<CommitEntry> log = List.of();
             try {
                 log = NativeGit.log(repo, maxCommits, allBranches, null);
@@ -563,9 +597,12 @@ public class MainWindow {
     }
 
     private void lightRefresh() {
-        Path repo = RepoManager.get().current();
+        // 整仓刷新(切换仓库/手动刷新)还在途时跳过这一拍,别让轮询去和首屏取数抢线程
+        if (RepoManager.get().epoch() == refreshingEpoch) return;
+        RepoGuard guard = RepoGuard.capture();
+        Path repo = guard.repo();
         if (repo == null) return;
-        Fx.bg("刷新状态…", () -> {
+        Fx.bg("刷新状态…", guard, () -> {
             try {
                 String head = NativeGit.headSha(repo);
                 StatusResult st = NativeGit.status(repo);

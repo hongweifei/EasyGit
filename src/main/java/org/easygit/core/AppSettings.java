@@ -32,6 +32,17 @@ public final class AppSettings {
 
     private static final AppSettings INSTANCE = new AppSettings();
 
+    /** 设置落盘调度线程(单线程守护):把连续的设置变更合并成一次写盘。 */
+    private static final java.util.concurrent.ScheduledExecutorService SAVER =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "easygit-settings-save");
+                t.setDaemon(true);
+                return t;
+            });
+    /** 写盘代号:出现新变更后,在途的延迟写盘直接作废(避免重复写同一份 JSON)。 */
+    private final java.util.concurrent.atomic.AtomicLong saveTicket =
+            new java.util.concurrent.atomic.AtomicLong();
+
     public static AppSettings get() { return INSTANCE; }
 
     private AppSettings() { load(); }
@@ -71,7 +82,23 @@ public final class AppSettings {
         }
     }
 
+    /**
+     * 设置变更后的落盘(延迟合并)。
+     * 连续切换仓库会在几毫秒内连着改 currentRepo / recentRepos,逐个同步写盘等于在 UI 线程
+     * 反复写同一份 JSON;这里合并成"最后一次变更之后 300ms 写一次"。
+     * 关窗/退出前用 {@link #saveNow()} 保证不丢。
+     */
     public synchronized void save() {
+        final long ticket = saveTicket.incrementAndGet();
+        SAVER.schedule(() -> {
+            if (ticket != saveTicket.get()) return; // 期间又变了,交给更新的那一次写
+            saveNow();
+        }, 300, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /** 立即落盘(关窗/退出前调用,保证设置不丢)。 */
+    public synchronized void saveNow() {
+        saveTicket.incrementAndGet(); // 作废在途的延迟写盘
         try {
             Files.createDirectories(FILE.getParent());
             JSONObject o = new JSONObject();

@@ -17,6 +17,9 @@ public final class RepoManager {
 
     private Path current;
     private final List<Consumer<Path>> listeners = new ArrayList<>();
+    /** 仓库代号:每次当前仓库发生变化就自增,UI 用它判断在途异步结果是否已过期。 */
+    private final java.util.concurrent.atomic.AtomicLong epoch =
+            new java.util.concurrent.atomic.AtomicLong();
 
     private RepoManager() {
         AppSettings s = AppSettings.get();
@@ -51,6 +54,12 @@ public final class RepoManager {
 
     public Path current() { return current; }
 
+    /**
+     * 仓库代号。连续切换仓库时,旧仓库的在途刷新任务靠它判定"已过期":
+     * 过期任务不再启动、结果不再回投界面(否则旧仓库的历史/状态会覆盖新仓库)。
+     */
+    public long epoch() { return epoch.get(); }
+
     public boolean hasRepo() { return current != null; }
 
     /** 打开/切换到目录所在仓库(自动加入管理列表,使用默认名)。 */
@@ -82,6 +91,7 @@ public final class RepoManager {
         AppSettings.get().setRepos(list);
         if (current != null && current.toString().equals(path)) {
             current = null;
+            epoch.incrementAndGet(); // 当前仓库没了 = 之前所有在途刷新作废
             AppSettings.get().setCurrentRepo("");
         }
         notifyListeners();
@@ -163,6 +173,8 @@ public final class RepoManager {
 
     private void select(Path root) {
         current = root;
+        // 代号先自增:监听者会在同一次通知里发起新一轮刷新,新任务必须拿到新代号
+        epoch.incrementAndGet();
         AppSettings.get().addRecentRepo(root);
         AppSettings.get().setCurrentRepo(root.toString());
         notifyListeners();

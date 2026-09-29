@@ -224,13 +224,24 @@ public class ChangesPanel extends VBox {
         }
     }
 
-    /** 切换仓库时清空标记与查看器。 */
-    public void clearDiffView() {
+    /**
+     * 切换仓库:清空标记、查看器与两个文件清单。
+     * 只清查看器不够——状态栏在切换瞬间就换成了新仓库,而两个清单要等新仓库的
+     * 状态到位才重填,中间这段窗口里旧仓库的文件会挂在新仓库界面上(连续切换时肉眼可见)。
+     */
+    public void onRepoSwitched() {
         updatingSelection = true;
         workList.getSelectionModel().clearSelection();
         stagedList.getSelectionModel().clearSelection();
         updatingSelection = false;
+        workList.getItems().clear();
+        stagedList.getItems().clear();
+        workTitle.setText("未暂存(含未跟踪) (0)");
+        stagedTitle.setText("待提交 (0)");
+        commitBtn.setDisable(true);
         selected = null;
+        selectSeq++; // 在途的旧文件/差异读取作废(守卫之外的二道保险)
+        lastStatus = null; // 旧仓库的状态快照作废:重新分桶/"加入待提交"都不能再基于它
         toCommit.clear();
         diffView.clear();
     }
@@ -287,7 +298,9 @@ public class ChangesPanel extends VBox {
             diffView.clear();
             return;
         }
-        Path repo = repo();
+        // 守卫:切走仓库后旧仓库的差异/文件内容不再回填查看器
+        RepoGuard guard = RepoGuard.capture();
+        Path repo = guard.repo();
         if (repo == null) return;
         final int seq = ++selectSeq;
         final FileChange requested = f;
@@ -301,7 +314,7 @@ public class ChangesPanel extends VBox {
                 diffView.showPlainFile(f.path, List.of("(文件在工作区已删除,可切换差异视图查看)"));
                 return;
             }
-            Fx.bg("读取文件…", () -> org.easygit.core.NativeGit.localFileLines(repo, f.path),
+            Fx.bg("读取文件…", guard, () -> org.easygit.core.NativeGit.localFileLines(repo, f.path),
                     lines -> {
                         if (selectSeq != seq || selected != requested) return;
                         diffView.showPlainFile(f.path, lines);
@@ -310,7 +323,7 @@ public class ChangesPanel extends VBox {
         }
         // 差异视图
         if (f.unmerged) {
-            Fx.bg("读取冲突文件…", () -> {
+            Fx.bg("读取冲突文件…", guard, () -> {
                 try {
                     return Files.readAllLines(repo.resolve(f.path));
                 } catch (Exception ex) {
@@ -322,19 +335,19 @@ public class ChangesPanel extends VBox {
             });
         } else if (f.untracked) {
             // 未跟踪文件没有真正的 diff:直接显示完整内容
-            Fx.bg("读取文件…", () -> org.easygit.core.NativeGit.localFileLines(repo, f.path),
+            Fx.bg("读取文件…", guard, () -> org.easygit.core.NativeGit.localFileLines(repo, f.path),
                     lines -> {
                         if (selectSeq != seq || selected != requested) return;
                         diffView.showPlainFile(f.path, lines);
                     });
         } else if (realStaged) {
-            Fx.bg("读取差异…", () -> org.easygit.core.NativeGit.diffStaged(repo, f.path),
+            Fx.bg("读取差异…", guard, () -> org.easygit.core.NativeGit.diffStaged(repo, f.path),
                     list -> {
                         if (selectSeq != seq || selected != requested) return;
                         diffView.showFiles(list);
                     });
         } else {
-            Fx.bg("读取差异…", () -> org.easygit.core.NativeGit.diffUnstaged(repo, f.path),
+            Fx.bg("读取差异…", guard, () -> org.easygit.core.NativeGit.diffUnstaged(repo, f.path),
                     list -> {
                         if (selectSeq != seq || selected != requested) return;
                         diffView.showFiles(list);

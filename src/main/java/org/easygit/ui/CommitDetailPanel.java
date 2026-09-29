@@ -261,9 +261,10 @@ public class CommitDetailPanel extends VBox {
         diffView.clear();
         setState(false);
 
-        Path repo = org.easygit.core.RepoManager.get().current();
+        RepoGuard guard = RepoGuard.capture();
+        Path repo = guard.repo();
         if (repo == null) return;
-        Fx.bg("读取提交差异…", () -> org.easygit.core.NativeGit.diffCommit(repo, c), list -> {
+        Fx.bg("读取提交差异…", guard, () -> org.easygit.core.NativeGit.diffCommit(repo, c), list -> {
             if (current != c) return; // 选择已切换,丢弃过期结果
             files = list;
             long add = list.stream().mapToLong(f -> f.added).sum();
@@ -333,10 +334,11 @@ public class CommitDetailPanel extends VBox {
             return;
         }
         String relPath = selected.newPath.isEmpty() ? selected.oldPath : selected.newPath;
-        Path repo = org.easygit.core.RepoManager.get().current();
+        RepoGuard guard = RepoGuard.capture();
+        Path repo = guard.repo();
         if (repo == null || current == null) return;
         final DiffFile requested = selected;
-        Fx.bg("读取文件内容…", () -> org.easygit.core.NativeGit.fileContentAt(repo, current.id, relPath),
+        Fx.bg("读取文件内容…", guard, () -> org.easygit.core.NativeGit.fileContentAt(repo, current.id, relPath),
                 content -> {
                     if (current == null || selected != requested) return; // 选择已切换,丢弃过期结果
                     diffView.showPlainFile(relPath, List.of(content.split("\n", -1)));

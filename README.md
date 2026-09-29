@@ -113,6 +113,7 @@ org.easygit
 │   ├── DiffView           # 虚拟化 diff 渲染
 │   ├── BranchPanel        # 分支/远程/标签树与右键操作
 │   ├── StashPanel / BlameView / ConflictDialog / Dialogs
+│   ├── RepoGuard          # 仓库切换守卫:在途刷新任务作废/取消(连续切换仓库不串仓)
 │   └── Fx / StatusBar     # 后台任务调度、忙碌与消息
 └── resources/css/theme.css # 亮/暗主题(looked-up colors)
 ```
@@ -120,3 +121,5 @@ org.easygit
 性能要点:UI 全程虚拟化(`ListView.setFixedCellSize` + 自绘 Canvas 泳道),
 git 读取全部在后台线程池执行,`GIT_OPTIONAL_LOCKS=0` 避免与 CLI 相互锁,
 状态 5 秒轻量轮询 + 操作后即时刷新。
+连续切换仓库时:切换通知合并成一次刷新,旧仓库仍在跑/排队的只读任务会被中断,
+过期结果一律丢弃(详见 `ui/RepoGuard` 与 `Fx.dropStaleTasks`)。

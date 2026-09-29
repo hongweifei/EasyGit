@@ -213,15 +213,30 @@ public class HistoryPanel extends VBox {
 
     private int histSeq = 0;
 
+    /**
+     * 切换仓库时的重置:清空列表/详情,并丢掉上一个仓库遗留的文件历史筛选。
+     * 筛选条件是按路径匹配的,带到新仓库只会筛出空历史。
+     */
+    public void onRepoSwitched() {
+        pathFilter = null;
+        filterBar.setVisible(false);
+        filterBar.setManaged(false);
+        unpushedIds = java.util.Set.of();
+        histSeq++; // 让在途的旧历史加载即使回来也不再回填
+        list.getItems().clear();
+        detail.clear();
+    }
+
     public void refresh() {
-        Path r = repo();
+        RepoGuard guard = RepoGuard.capture();
+        Path r = guard.repo();
         if (r == null) {
             list.getItems().clear();
             detail.clear();
             return;
         }
         final int seq = ++histSeq; // 防止并发的多次加载乱序覆盖
-        Fx.bg("读取提交历史…", () -> {
+        Fx.bg("读取提交历史…", guard, () -> {
             List<CommitEntry> log = org.easygit.core.NativeGit.log(r,
                     org.easygit.core.AppSettings.get().maxCommits(),
                     allBranches.isSelected(), null, pathFilter);

@@ -50,9 +50,12 @@ public class BlameView extends VBox {
     }
 
     private void load() {
-        Path repo = org.easygit.core.RepoManager.get().current();
+        // Blame 页签会随仓库切换被关掉;守卫让旧仓库的结果不再回填这个已脱离场景的视图
+        RepoGuard guard = RepoGuard.capture();
+        Path repo = guard.repo();
         if (repo == null) return;
-        Fx.bg("读取 blame…", () -> org.easygit.core.NativeGit.blame(repo, path), lines -> list.getItems().setAll(lines));
+        Fx.bg("读取 blame…", guard, () -> org.easygit.core.NativeGit.blame(repo, path),
+                lines -> list.getItems().setAll(lines));
     }
 
     public String path() { return path; }
