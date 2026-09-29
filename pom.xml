@@ -6,6 +6,8 @@
 
     <groupId>org.easygit</groupId>
     <artifactId>easygit</artifactId>
+    <!-- 版本号保持 x.y.z 纯数字: jpackage 的 app-version 参数与打包脚本不接受后缀;
+         dev 标记(-dev)由 AppVersion 在运行时按"是否打包"自动附加 -->
     <version>0.1.2</version>
     <packaging>jar</packaging>
     <name>EasyGit</name>
@@ -18,6 +20,7 @@
         <jgit.version>7.8.0.202609011348-r</jgit.version>
         <junit.version>5.10.2</junit.version>
         <main.class>org.easygit.EasyGitApp</main.class>
+        <maven.build.timestamp.format>yyyy-MM-dd HH:mm</maven.build.timestamp.format>
     </properties>
 
     <dependencies>
@@ -59,6 +62,20 @@
     </dependencies>
 
     <build>
+        <resources>
+            <!-- 只对 app-version.properties 做过滤注入版本号与构建时间;
+                 其余资源不做过滤,避免 ${...} 替换误伤二进制/样式文件 -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes><include>app-version.properties</include></includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes><exclude>app-version.properties</exclude></excludes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -1,6 +1,7 @@
 package org.easygit.ui;
 
 import org.easygit.core.AppSettings;
+import org.easygit.core.AppVersion;
 import org.easygit.core.GraphBuilder;
 import org.easygit.core.GitProcess;
 import org.easygit.core.JGitService;
@@ -94,7 +95,7 @@ public class MainWindow {
         if ("dark".equals(AppSettings.get().theme())) {
             root.getStyleClass().add("dark");
         }
-        stage.setTitle("EasyGit");
+        stage.setTitle("EasyGit " + AppVersion.display());
         stage.setMinWidth(980);
         stage.setMinHeight(640);
         stage.setScene(scene);
@@ -368,7 +369,8 @@ public class MainWindow {
             }
         });
 
-        Label gitInfo = new Label(GitProcess.version() + "   ·   " + org.easygit.core.GitLocator.describe());
+        Label gitInfo = new Label(AppVersion.full() + "   ·   " + GitProcess.version()
+                + "   ·   " + org.easygit.core.GitLocator.describe());
         gitInfo.getStyleClass().add("dim");
 
         Region spacerTop = new Region();
