@@ -25,7 +25,9 @@ public final class AppSettings {
     private List<String> recentRepos = new ArrayList<>();
     private String theme = "light";
     private int maxCommits = 2000;
-    private double windowW = 1280, windowH = 800;
+    /** 首次启动的默认窗口尺寸;取值以能在 1366x768 的笔记本屏上放得下为准。 */
+    public static final double DEFAULT_WINDOW_W = 1120, DEFAULT_WINDOW_H = 700;
+    private double windowW = DEFAULT_WINDOW_W, windowH = DEFAULT_WINDOW_H;
     private String gitPath = "";
 
     private static final AppSettings INSTANCE = new AppSettings();
@@ -60,8 +62,8 @@ public final class AppSettings {
                 }
                 theme = o.optString("theme", "light");
                 maxCommits = o.optInt("maxCommits", 2000);
-                windowW = o.optDouble("windowW", 1280);
-                windowH = o.optDouble("windowH", 800);
+                windowW = o.optDouble("windowW", DEFAULT_WINDOW_W);
+                windowH = o.optDouble("windowH", DEFAULT_WINDOW_H);
                 gitPath = o.optString("gitPath", "");
             }
         } catch (Throwable t) {

@@ -28,6 +28,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
@@ -78,8 +79,16 @@ public class MainWindow {
         poller.play();
     }
 
+    /** 最大化前的窗口尺寸:最大化状态下关闭时取到的是整个屏幕,存下来下次会撑爆屏幕。 */
+    private double preMaxW, preMaxH;
+
     public void show() {
-        Scene scene = new Scene(root, AppSettings.get().windowW(), AppSettings.get().windowH());
+        double[] fit = fitToScreen(AppSettings.get().windowW(), AppSettings.get().windowH(),
+                AppSettings.DEFAULT_WINDOW_W, AppSettings.DEFAULT_WINDOW_H,
+                stage.getMinWidth(), stage.getMinHeight());
+        preMaxW = fit[0];
+        preMaxH = fit[1];
+        Scene scene = new Scene(root, fit[0], fit[1]);
         String css = getClass().getResource("/css/theme.css").toExternalForm();
         scene.getStylesheets().add(css);
         if ("dark".equals(AppSettings.get().theme())) {
@@ -89,9 +98,36 @@ public class MainWindow {
         stage.setMinWidth(980);
         stage.setMinHeight(640);
         stage.setScene(scene);
-        stage.setOnCloseRequest(e -> AppSettings.get().setWindowSize(stage.getWidth(), stage.getHeight()));
+        // 只记录非最大化时的尺寸;最大化瞬间宽高已经变成整屏,要跳过
+        stage.widthProperty().addListener((o, ov, nv) -> {
+            if (!stage.isMaximized()) preMaxW = nv.doubleValue();
+        });
+        stage.heightProperty().addListener((o, ov, nv) -> {
+            if (!stage.isMaximized()) preMaxH = nv.doubleValue();
+        });
+        stage.setOnCloseRequest(e -> AppSettings.get().setWindowSize(
+                Math.max(preMaxW, stage.getMinWidth()), Math.max(preMaxH, stage.getMinHeight())));
         stage.show();
         refreshAll();
+    }
+
+    /**
+     * 还原窗口尺寸时的屏幕适配。
+     * 存储尺寸放得下当前屏幕 -> 原样使用(尊重用户自己调的大小)。
+     * 放不下 -> 回退到默认尺寸:多显示器间移动、改过系统缩放比例、或在最大化状态下
+     * 关闭,都会把比屏幕还大的尺寸存进设置(实测存到过 2604x1483,而屏幕只有 1536x912),
+     * 直接还原会让窗口大到超出屏幕。回退值仍受屏幕可视区的 92% 与最小尺寸约束。
+     */
+    public static double[] fitToScreen(double w, double h, double defW, double defH,
+                                       double minW, double minH) {
+        var vb = Screen.getPrimary().getVisualBounds();
+        if (w <= vb.getWidth() && h <= vb.getHeight()) {
+            return new double[]{Math.max(minW, w), Math.max(minH, h)};
+        }
+        double maxW = Math.max(minW, vb.getWidth() * 0.92);
+        double maxH = Math.max(minH, vb.getHeight() * 0.92);
+        return new double[]{Math.min(Math.max(minW, defW), maxW),
+                            Math.min(Math.max(minH, defH), maxH)};
     }
 
     // ---------- 布局 ----------
