@@ -32,7 +32,7 @@ import java.util.List;
  */
 public class HistoryPanel extends VBox {
 
-    /** 提交图泳道色:青碧主色领衔(见 DESIGN.md),其余为高区分度的功能色。 */
+    /** 提交图泳道色:青碧主色领衔(见 docs/DESIGN.md),其余为高区分度的功能色。 */
     private static final Color[] PALETTE = {
             Color.web("#14b8a6"), Color.web("#58a6ff"), Color.web("#d29922"), Color.web("#f85149"),
             Color.web("#a371f7"), Color.web("#39c5cf"), Color.web("#ff7b72"), Color.web("#7ee787")

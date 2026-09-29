@@ -24,7 +24,7 @@ public class BlameView extends VBox {
 
     private static final DateTimeFormatter DTF =
             DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault());
-    /** Blame 段落色:与提交图泳道同套青碧领衔配色(见 DESIGN.md)。 */
+    /** Blame 段落色:与提交图泳道同套青碧领衔配色(见 docs/DESIGN.md)。 */
     private static final Color[] PALETTE = {
             Color.web("#14b8a6"), Color.web("#58a6ff"), Color.web("#d29922"), Color.web("#f85149"),
             Color.web("#a371f7"), Color.web("#39c5cf"), Color.web("#ff7b72"), Color.web("#7ee787")
