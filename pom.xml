@@ -6,9 +6,10 @@
 
     <groupId>org.easygit</groupId>
     <artifactId>easygit</artifactId>
-    <!-- 版本号保持 x.y.z 纯数字: jpackage 的 app-version 参数与打包脚本不接受后缀;
-         dev 标记(-dev)由 AppVersion 在运行时按"是否打包"自动附加 -->
-    <version>0.1.3</version>
+    <!-- 版本周期:开发期写"下一版本-SNAPSHOT"(0.1.3 发布后即为 0.1.4-SNAPSHOT,
+         大版本则 0.2.0-SNAPSHOT);发布时去掉后缀即为正式版本号,打包脚本会自动
+         剥掉 SNAPSHOT 再交给 jpackage。dev 标记(-dev)由 AppVersion 按运行环境附加 -->
+    <version>0.1.4-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>EasyGit</name>
     <description>原生 JavaFX Git 桌面客户端(高性能)</description>

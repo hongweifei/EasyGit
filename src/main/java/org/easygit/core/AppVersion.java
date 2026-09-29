@@ -15,18 +15,23 @@ import java.util.Properties;
  * ${project.version} 与 ${maven.build.timestamp} 写入 app-version.properties,
  * 运行时从这里读取——避免"pom 一个版本、代码里又一个版本"的两处维护。
  *
- * <p>dev 版本管理:运行环境不是 jpackage 打包的应用(IDE 直接运行 /
- * mvn javafx:run / java -jar fat jar)即视为 dev 构建,展示为 "0.1.2-dev";
- * jpackage 启动器会设置 jpackage.app-version 系统属性,据此识别正式包,
- * 展示为 "0.1.2"。可用 -Deasygit.dev=false 强制按正式版展示(-Deasygit.dev
- * 或 =true 则强制按 dev 展示)。
+ * <p>版本周期(s semver 惯例):
+ * <ul>
+ *   <li>开发期:pom 写 "下一版本-SNAPSHOT"(如发布 0.1.3 后进入 0.1.4 开发,则写
+ *       0.1.4-SNAPSHOT;大版本则写 0.2.0-SNAPSHOT),dev 构建展示为 "0.1.4-dev";</li>
+ *   <li>发布:去掉 -SNAPSHOT 后缀即为正式版本号(打包脚本也会自动剥掉),
+ *       正式包展示为 "0.1.4"。</li>
+ * </ul>
  *
- * <p>注意:pom 的 version 必须保持 x.y.z 纯数字——jpackage 的 --app-version
- * 与打包脚本(package.ps1/package.sh)不接受 "-dev" 后缀,后缀只在展示层附加。
+ * <p>dev 识别:运行环境不是 jpackage 打包的应用(IDE 直接运行 /
+ * mvn javafx:run / java -jar fat jar)即视为 dev 构建;jpackage 启动器会设置
+ * jpackage.app-version 系统属性,据此识别正式包。可用 -Deasygit.dev=false
+ * 强制按正式版展示(-Deasygit.dev 或 =true 则强制按 dev 展示)。
  */
 public final class AppVersion {
     private static final String UNKNOWN = "0.0.0";
-    private static final String VERSION;
+    private static final String SNAPSHOT_SUFFIX = "-SNAPSHOT";
+    private static final String RAW_VERSION;
     private static final String BUILD_TIME;
 
     static {
@@ -38,7 +43,7 @@ public final class AppVersion {
             // 资源缺失(异常的类路径)时按未知版本处理,不影响启动
         }
         String v = p.getProperty("app.version", "").strip();
-        VERSION = v.isEmpty() ? UNKNOWN : v;
+        RAW_VERSION = v.isEmpty() ? UNKNOWN : v;
         BUILD_TIME = prettify(p.getProperty("app.build.time", ""));
     }
 
@@ -61,8 +66,18 @@ public final class AppVersion {
         }
     }
 
-    /** pom.xml 里的版本号,如 0.1.2。 */
-    public static String version() { return VERSION; }
+    /** pom.xml 里的原始版本号,开发期可能带 -SNAPSHOT 后缀(如 0.1.4-SNAPSHOT)。 */
+    public static String rawVersion() { return RAW_VERSION; }
+
+    /** 是否处于 SNAPSHOT 开发期(pom 版本带 -SNAPSHOT 后缀)。 */
+    public static boolean snapshot() { return RAW_VERSION.endsWith(SNAPSHOT_SUFFIX); }
+
+    /** 生效版本号:去掉 -SNAPSHOT 后缀,如 0.1.4。 */
+    public static String version() { return stripSnapshot(RAW_VERSION); }
+
+    static String stripSnapshot(String v) {
+        return v.endsWith(SNAPSHOT_SUFFIX) ? v.substring(0, v.length() - SNAPSHOT_SUFFIX.length()) : v;
+    }
 
     /** 构建时间(构建期注入),用于区分先后产生的 dev 构建;缺失时返回空串。 */
     public static String buildTime() { return BUILD_TIME; }
@@ -80,8 +95,8 @@ public final class AppVersion {
         return v.isEmpty() || Boolean.parseBoolean(v);
     }
 
-    /** 展示用版本号:dev 构建带 "-dev" 后缀,如 0.1.2-dev。 */
-    public static String display() { return isDev() ? VERSION + "-dev" : VERSION; }
+    /** 展示用版本号:dev 构建带 "-dev" 后缀,如 0.1.4-dev(0.1.4 为生效版本号)。 */
+    public static String display() { return isDev() ? version() + "-dev" : version(); }
 
     /** 完整描述:版本 + 构建时间(若有),用于欢迎页与关于信息。 */
     public static String full() {

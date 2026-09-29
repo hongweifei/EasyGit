@@ -13,7 +13,12 @@ try {
     [xml]$pomXml = Get-Content pom.xml -Raw
     $version = [string]$pomXml.project.version
     if (-not $version) { throw "无法从 pom.xml 读取版本号" }
-    Write-Host "==> 版本: $version" -ForegroundColor Cyan
+    # 开发期 pom 版本带 -SNAPSHOT 后缀;jpackage 只接受纯数字点分,发布名去掉后缀
+    $appVersion = $version -replace '-SNAPSHOT$', ''
+    if ($appVersion -ne $version) {
+        Write-Host "==> SNAPSHOT 构建:安装包按 $appVersion 发布" -ForegroundColor Yellow
+    }
+    Write-Host "==> 版本: $version (app: $appVersion)" -ForegroundColor Cyan
     # 只把最终 jar 放进 jpackage 输入目录(target 里还有旧版本/中间产物,不能全拷)
     $stage = Join-Path $env:TEMP "easygit-jpackage-input"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
@@ -24,7 +29,7 @@ try {
     if (Test-Path dist) { Remove-Item dist -Recurse -Force }
     jpackage `
         --name EasyGit `
-        --app-version $version `
+        --app-version $appVersion `
         --icon src\main\resources\icons\easygit.ico `
         --input $stage `
         --main-jar "easygit-$version.jar" `
