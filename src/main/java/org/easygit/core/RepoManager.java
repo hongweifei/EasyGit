@@ -97,6 +97,37 @@ public final class RepoManager {
         notifyListeners();
     }
 
+    /** 重命名分组:组内所有仓库一起迁移到新组名;新组名与已有分组相同则相当于合并。 */
+    public void renameGroup(String from, String to) {
+        String target = to == null ? "" : to.strip();
+        if (from == null || from.isBlank() || target.isBlank() || from.equals(target)) return;
+        moveGroup(from, target);
+    }
+
+    /** 解散分组:组内所有仓库移到未分组(不删除仓库本身)。 */
+    public void dissolveGroup(String name) {
+        if (name == null || name.isBlank()) return;
+        moveGroup(name, "");
+    }
+
+    /** 把 from 组的所有仓库整体移到 to 组(to 为空串表示未分组)。 */
+    private void moveGroup(String from, String to) {
+        List<AppSettings.RepoEntry> list = new ArrayList<>();
+        boolean changed = false;
+        for (AppSettings.RepoEntry e : AppSettings.get().repos()) {
+            if (e.group().equals(from)) {
+                list.add(new AppSettings.RepoEntry(e.path(), e.name(), to));
+                changed = true;
+            } else {
+                list.add(e);
+            }
+        }
+        if (changed) {
+            AppSettings.get().setRepos(list);
+            notifyListeners();
+        }
+    }
+
     private void updateRepo(String path, String newName, String newGroup) {
         List<AppSettings.RepoEntry> list = new ArrayList<>();
         for (AppSettings.RepoEntry e : AppSettings.get().repos()) {

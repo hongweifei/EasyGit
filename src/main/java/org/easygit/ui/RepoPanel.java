@@ -29,7 +29,11 @@ import java.util.Map;
  */
 public class RepoPanel extends VBox {
 
-    private record Node(String kind, String group, AppSettings.RepoEntry repo) {
+    /**
+     * kind=SECTION 时 group 是原始分组名(空串表示未分组),count 是组内仓库数;
+     * kind=REPO 时 group 是该仓库所属分组,repo 为仓库条目。
+     */
+    private record Node(String kind, String group, int count, AppSettings.RepoEntry repo) {
         static final String ROOT = "root";
         static final String SECTION = "section";
         static final String REPO = "repo";
@@ -63,7 +67,7 @@ public class RepoPanel extends VBox {
     }
 
     private void rebuild() {
-        TreeItem<Node> root = new TreeItem<>(new Node(Node.ROOT, null, null));
+        TreeItem<Node> root = new TreeItem<>(new Node(Node.ROOT, null, 0, null));
 
         List<AppSettings.RepoEntry> repos = RepoManager.get().managedRepos();
         Map<String, List<AppSettings.RepoEntry>> byGroup = new LinkedHashMap<>();
@@ -78,10 +82,11 @@ public class RepoPanel extends VBox {
             List<AppSettings.RepoEntry> list = en.getValue();
             if (list.isEmpty()) continue;
             String g = en.getKey();
-            TreeItem<Node> section = new TreeItem<>(new Node(Node.SECTION,
-                    g.isEmpty() ? "未分组" : g + " (" + list.size() + ")", null));
+            TreeItem<Node> section = new TreeItem<>(new Node(Node.SECTION, g, list.size(), null));
+            // 默认展开:否则每次刷新(增删/改名/切仓库)后所有分组都会收起,仓库全被藏起来
+            section.setExpanded(true);
             for (AppSettings.RepoEntry e : list) {
-                section.getChildren().add(new TreeItem<>(new Node(Node.REPO, g, e)));
+                section.getChildren().add(new TreeItem<>(new Node(Node.REPO, g, 0, e)));
             }
             root.getChildren().add(section);
         }
@@ -100,13 +105,15 @@ public class RepoPanel extends VBox {
                 return;
             }
             if (n.kind().equals(Node.SECTION)) {
-                Label l = new Label(n.group());
+                String title = n.group().isEmpty() ? "未分组" : n.group() + " (" + n.count() + ")";
+                Label l = new Label(title);
                 l.getStyleClass().add("section-title");
                 setGraphic(l);
                 setText(null);
-                setContextMenu(null);
-                setOnMouseClicked(null);
                 setTooltip(null);
+                setOnMouseClicked(null);
+                // "未分组"不是可管理的分组,不提供菜单;真正的分组可重命名/解散
+                setContextMenu(n.group().isEmpty() ? null : sectionMenu(n.group()));
                 return;
             }
             // 仓库节点
@@ -156,7 +163,7 @@ public class RepoPanel extends VBox {
                     }
                 }),
                 mi("移动到分组…", () -> {
-                    String g = askGroup();
+                    String g = askGroup(e.group());
                     if (g != null) RepoManager.get().setRepoGroup(e.path(), g);
                 }),
                 mi("在文件管理器中显示", () -> revealInFileManager(e.path())),
@@ -173,14 +180,35 @@ public class RepoPanel extends VBox {
         return menu;
     }
 
-    /** 分组选择:可选已有分组、新建分组或未分组。返回 null=取消。 */
-    private String askGroup() {
+    /** 分组节点的右键菜单:重命名(可并入已有分组)、解散(仓库移到未分组)。 */
+    private ContextMenu sectionMenu(String group) {
+        ContextMenu menu = new ContextMenu();
+        menu.getItems().addAll(
+                mi("重命名分组…", () -> {
+                    String name = Dialogs.askText("重命名分组", "分组名:", group);
+                    if (name == null) return;
+                    String t = name.strip();
+                    if (t.isEmpty() || t.equals(group)) return;
+                    RepoManager.get().renameGroup(group, t);
+                }),
+                mi("解散分组(仓库移到未分组)", () -> {
+                    if (!Fx.confirm("解散分组",
+                            "解散分组「" + group + "」?\n组内仓库将移到未分组(不会删除仓库)。")) return;
+                    RepoManager.get().dissolveGroup(group);
+                })
+        );
+        return menu;
+    }
+
+    /** 分组选择:可选已有分组、新建分组或未分组;预选仓库当前所在分组。返回 null=取消。 */
+    private String askGroup(String current) {
         List<String> groups = RepoManager.get().groups();
         javafx.scene.control.ComboBox<String> combo = new javafx.scene.control.ComboBox<>();
         combo.setEditable(true);
         combo.getItems().add("(未分组)");
         combo.getItems().addAll(groups);
-        combo.getSelectionModel().selectFirst();
+        if (current == null || current.isBlank()) combo.getSelectionModel().selectFirst();
+        else combo.getSelectionModel().select(current);
         combo.setPrefWidth(260);
 
         javafx.scene.control.Dialog<String> d = new javafx.scene.control.Dialog<>();
