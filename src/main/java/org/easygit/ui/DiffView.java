@@ -50,7 +50,6 @@ public class DiffView extends VBox {
 
     private final ListView<Row> list = new ListView<>();
     private final ObservableList<Row> rows = FXCollections.observableArrayList();
-    private final Label emptyHint = new Label("选择文件或提交以查看差异");
     /** 文件视图模式:只显示一列行号(差异视图为两列)。 */
     private final javafx.beans.property.BooleanProperty plainFile =
             new javafx.beans.property.SimpleBooleanProperty(false);
@@ -64,14 +63,11 @@ public class DiffView extends VBox {
 
     public DiffView() {
         setSpacing(0);
-        emptyHint.getStyleClass().add("dim");
         list.getStyleClass().add("diff-list");
         list.setFixedCellSize(21);
         list.setCellFactory(v -> new Cell());
         list.setItems(rows);
-        rows.addListener((javafx.collections.ListChangeListener<Row>) c ->
-                emptyHint.setVisible(rows.isEmpty()));
-        getChildren().addAll(emptyHint, list);
+        getChildren().add(list);
         VBox.setVgrow(list, Priority.ALWAYS);
         // 布局切换后立即重建(纯文件模式在 rebuild 内部仍按统一视图处理)
         sideBySide.addListener((o, ov, nv) -> rebuild());

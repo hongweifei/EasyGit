@@ -97,6 +97,10 @@ public class CommitDetailPanel extends VBox {
         bodyScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         bodyScroll.getStyleClass().add("body-scroll");
         bodyScroll.setPrefHeight(80);
+        // 详情区空间不足时 VBox 会把信息块压到最小——ScrollPane 最小≈一行,
+        // 提交消息会被压得看不了;钉住"最小=首选"(短消息全文展示,长消息
+        // 保持 160~280 的可视高度内部滚动),压缩由下方文件区承担
+        bodyScroll.setMinHeight(Region.USE_PREF_SIZE);
         heightProperty().addListener((o, ov, nv) -> {
             if (nv != null && nv.doubleValue() > 0 && bodyVisualLines > 5) {
                 updateBodyHeight();

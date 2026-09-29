@@ -20,10 +20,13 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.Separator;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
-import javafx.scene.control.ToolBar;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -68,11 +71,13 @@ public class MainWindow {
         historyPanel = new HistoryPanel(this::refreshAll, this::openBlame);
         stashPanel = new StashPanel(this::refreshAll);
         buildRepoUI();
-        buildToolbar();
+        branchPanel.setActions(this::newBranchAction,
+                () -> Dialogs.mergeDialog(snapshotBranches, this::refreshAll));
 
-        root.setCenter(welcome);
         outputPanel = new OutputPanel(); // 构造时绑定 UiLog
         root.setBottom(new VBox(outputPanel, statusBar));
+        buildHeader();
+        root.setCenter(welcome);
 
         RepoManager.get().addListener(repo -> Platform.runLater(this::refreshAll));
 
@@ -108,8 +113,7 @@ public class MainWindow {
         stage.heightProperty().addListener((o, ov, nv) -> {
             if (!stage.isMaximized()) preMaxH = nv.doubleValue();
         });
-        stage.setOnCloseRequest(e -> AppSettings.get().setWindowSize(
-                Math.max(preMaxW, stage.getMinWidth()), Math.max(preMaxH, stage.getMinHeight())));
+        stage.setOnCloseRequest(e -> saveWindowBounds());
         stage.show();
         refreshAll();
     }
@@ -146,35 +150,39 @@ public class MainWindow {
         // 设计语言:画布 + 浮动卡片 —— 左侧(仓库/分支)一张卡,中部页签一张卡,
         // 顶部命令栏与底部状态条全宽附着,卡片与画布之间留 8px 呼吸缝
         leftBox = new VBox(4, repoPanel, new Separator(), branchPanel);
-        leftBox.getStyleClass().add("card");
+        leftBox.getStyleClass().add("side-panel");
         leftBox.setPrefWidth(300);
         leftBox.setMinWidth(220);
         centerCard = new VBox(tabs);
-        centerCard.getStyleClass().add("card");
         VBox.setVgrow(tabs, Priority.ALWAYS);
-        BorderPane.setMargin(leftBox, new Insets(8, 0, 8, 8));
-        // 缝隙由「中卡自身的四向 margin」制造:BorderPane 摆中心区只参考中心节点自己的 margin
-        BorderPane.setMargin(centerCard, new Insets(8, 8, 8, 8));
         root.setLeft(leftBox);
         root.setCenter(centerCard);
     }
 
-    private void buildToolbar() {
-        Button open = new Button("打开");
-        open.setOnAction(e -> Dialogs.openRepo(stage));
-        Button clone = new Button("克隆");
-        clone.setOnAction(e -> Dialogs.cloneRepo(stage));
-        Button init = new Button("初始化");
-        init.setOnAction(e -> Dialogs.initRepo(stage));
+    /** 头部命令栏:左=仓库切换器,右=按频率分组的动作;低频操作收进「更多」。 */
+    private MenuButton repoSwitcher;
+    private HBox headerBar;
 
-        Button refresh = new Button("⟳ 刷新");
-        refresh.setOnAction(e -> refreshAll());
+    private void buildHeader() {
+        // 左锚点:仓库切换器(项目控件;品牌名交给系统标题栏,应用内不重复)
+        repoSwitcher = new MenuButton("未打开仓库");
+        repoSwitcher.getStyleClass().add("repo-switcher");
+        refreshRepoSwitcher();
 
-        Button pull = new Button("拉取");
-        pull.setOnAction(e -> network("拉取中…", () -> NativeGit.pull(RepoManager.get().current())));
-        Button push = new Button("推送");
-        push.setOnAction(e -> Dialogs.pushDialog(null, this::refreshAll));
-        Button fetch = new Button("抓取");
+        // 右侧高频组:拉取 / 推送 / 刷新(真实文字钮,不用神秘图标)
+        Button pullBtn = new Button("拉取");
+        pullBtn.getStyleClass().add("ghost");
+        pullBtn.setOnAction(e -> network("拉取中…", () -> NativeGit.pull(RepoManager.get().current())));
+        Button pushBtn = new Button("推送");
+        pushBtn.getStyleClass().add("ghost");
+        pushBtn.setOnAction(e -> Dialogs.pushDialog(null, this::refreshAll));
+        Button refreshBtn = new Button("刷新");
+        refreshBtn.getStyleClass().add("ghost");
+        refreshBtn.setOnAction(e -> refreshAll());
+
+        // 低频收纳:抓取 / Blame / LFS / 输出 / 主题
+        MenuButton more = new MenuButton("⋯");
+        MenuItem fetch = new MenuItem("抓取(fetch)");
         fetch.setOnAction(e -> {
             Path repo = RepoManager.get().current();
             if (repo == null) return;
@@ -185,45 +193,105 @@ public class MainWindow {
             }
             network("抓取中…", () -> NativeGit.fetch(repo));
         });
-
-        Button newBranch = new Button("新建分支");
-        newBranch.setOnAction(e -> {
-            if (RepoManager.get().current() == null) return;
-            String name = Dialogs.newBranch("");
-            if (name != null) {
-                Fx.bg("创建分支…", () -> {
-                    new JGitService(RepoManager.get().current()).checkout(name, true, null);
-                    return true;
-                }, r -> {
-                    Fx.status("已创建并切换到 " + name);
-                    refreshAll();
-                });
-            }
-        });
-        Button mergeBtn = new Button("合并");
-        mergeBtn.setOnAction(e -> {
-            Path repo = RepoManager.get().current();
-            if (repo == null) return;
-            Dialogs.mergeDialog(branchPanel == null ? List.of() : snapshotBranches, this::refreshAll);
-        });
-
-        Button blameBtn = new Button("Blame");
-        blameBtn.setOnAction(e -> {
+        MenuItem blame = new MenuItem("Blame 文件(输入路径)…");
+        blame.setOnAction(e -> {
             if (RepoManager.get().current() == null) return;
             String path = Dialogs.askText("Blame", "输入要追溯的文件相对路径:", "");
             if (path != null && !path.isBlank()) openBlame(path.strip());
         });
+        MenuItem outputItem = new MenuItem("显示 / 隐藏输出面板");
+        outputItem.setOnAction(e -> outputPanel.toggle());
+        MenuItem themeItem = new MenuItem("切换亮暗主题");
+        themeItem.setOnAction(e -> toggleTheme());
+        more.getItems().addAll(fetch, blame, buildLfsMenu(), new SeparatorMenuItem(),
+                outputItem, themeItem);
 
-        // LFS 菜单
-        javafx.scene.control.MenuButton lfsBtn = new javafx.scene.control.MenuButton("LFS");
-        javafx.scene.control.MenuItem miLfsStatus = new javafx.scene.control.MenuItem("LFS 状态…");
-        javafx.scene.control.MenuItem miLfsPull = new javafx.scene.control.MenuItem("拉取 LFS 对象");
-        javafx.scene.control.MenuItem miLfsFetch = new javafx.scene.control.MenuItem("抓取 LFS 对象");
-        javafx.scene.control.MenuItem miLfsTrack = new javafx.scene.control.MenuItem("管理跟踪规则…");
-        javafx.scene.control.MenuItem miLfsPrune = new javafx.scene.control.MenuItem("清理本地对象缓存…");
-        javafx.scene.control.MenuItem miLfsInstall = new javafx.scene.control.MenuItem("初始化 Git LFS(git lfs install)");
-        lfsBtn.getItems().addAll(miLfsStatus, miLfsPull, miLfsFetch, miLfsTrack, miLfsPrune,
-                new javafx.scene.control.SeparatorMenuItem(), miLfsInstall);
+        Button settingsBtn = new Button("设置");
+        settingsBtn.getStyleClass().add("ghost");
+        settingsBtn.setOnAction(e -> SettingsDialog.show(stage, root));
+
+        // 组间细分隔线:高频组 | 收纳组
+        Separator groupSep = new Separator();
+        groupSep.setOrientation(javafx.geometry.Orientation.VERTICAL);
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox header = new HBox(6, repoSwitcher, spacer,
+                pullBtn, pushBtn, refreshBtn, groupSep, more, settingsBtn);
+        header.getStyleClass().add("header-bar");
+        header.setAlignment(Pos.CENTER_LEFT);
+        headerBar = header;
+        root.setTop(header);
+    }
+
+    /** 关闭/退出前保存窗口尺寸(最大化瞬间取到的是整屏,回退到最大化前)。 */
+    private void saveWindowBounds() {
+        AppSettings.get().setWindowSize(
+                Math.max(preMaxW, stage.getMinWidth()),
+                Math.max(preMaxH, stage.getMinHeight()));
+    }
+
+    private void toggleTheme() {
+        var classes = root.getStyleClass();
+        boolean dark = classes.contains("dark");
+        if (dark) {
+            classes.remove("dark");
+            AppSettings.get().setTheme("light");
+        } else {
+            classes.add("dark");
+            AppSettings.get().setTheme("dark");
+        }
+    }
+
+    /** 仓库切换器:受管仓库列表 + 打开/克隆/初始化。 */
+    private void refreshRepoSwitcher() {
+        if (repoSwitcher == null) return;
+        repoSwitcher.getItems().clear();
+        String cur = RepoManager.get().current() == null ? "" : RepoManager.get().current().toString();
+        for (AppSettings.RepoEntry e : AppSettings.get().repos()) {
+            boolean current = e.path().equals(cur);
+            MenuItem mi = new MenuItem((current ? "✓  " : "") + e.name()
+                    + (e.group().isBlank() ? "" : "   ·  " + e.group()));
+            mi.setOnAction(ev -> {
+                if (!RepoManager.get().open(Path.of(e.path()))) {
+                    Fx.error("打开失败", "该目录不再是 git 仓库: " + e.path(), null);
+                }
+            });
+            repoSwitcher.getItems().add(mi);
+        }
+        if (!AppSettings.get().repos().isEmpty()) repoSwitcher.getItems().add(new SeparatorMenuItem());
+        MenuItem open = new MenuItem("打开仓库…");
+        open.setOnAction(e -> Dialogs.openRepo(stage));
+        MenuItem clone = new MenuItem("克隆仓库…");
+        clone.setOnAction(e -> Dialogs.cloneRepo(stage));
+        MenuItem init = new MenuItem("初始化新仓库…");
+        init.setOnAction(e -> Dialogs.initRepo(stage));
+        repoSwitcher.getItems().addAll(open, clone, init);
+    }
+
+    private void newBranchAction() {
+        if (RepoManager.get().current() == null) return;
+        String name = Dialogs.newBranch("");
+        if (name != null) {
+            Fx.bg("创建分支…", () -> {
+                new JGitService(RepoManager.get().current()).checkout(name, true, null);
+                return true;
+            }, r -> {
+                Fx.status("已创建并切换到 " + name);
+                refreshAll();
+            });
+        }
+    }
+
+    /** LFS 子菜单(收纳进头部「⋯」)。 */
+    private javafx.scene.control.Menu buildLfsMenu() {
+        javafx.scene.control.Menu lfsMenu = new javafx.scene.control.Menu("Git LFS");
+        MenuItem miLfsStatus = new MenuItem("LFS 状态…");
+        MenuItem miLfsPull = new MenuItem("拉取 LFS 对象");
+        MenuItem miLfsFetch = new MenuItem("抓取 LFS 对象");
+        MenuItem miLfsTrack = new MenuItem("管理跟踪规则…");
+        MenuItem miLfsPrune = new MenuItem("清理本地对象缓存…");
+        MenuItem miLfsInstall = new MenuItem("初始化 Git LFS(git lfs install)");
         miLfsStatus.setOnAction(e -> {
             Fx.bg("读取 LFS 状态…", () -> {
                 Path repo = RepoManager.get().current();
@@ -285,33 +353,9 @@ public class MainWindow {
                 return true;
             }, ok -> Fx.info("Git LFS", "已初始化(git lfs install),之后 add/commit/push 会自动处理 LFS 文件。"));
         });
-
-        Button themeBtn = new Button("主题");
-        themeBtn.setOnAction(e -> {
-            var classes = root.getStyleClass();
-            boolean dark = classes.contains("dark");
-            if (dark) {
-                classes.remove("dark");
-                AppSettings.get().setTheme("light");
-            } else {
-                classes.add("dark");
-                AppSettings.get().setTheme("dark");
-            }
-        });
-
-        Button outputBtn = new Button("输出");
-        outputBtn.setOnAction(e -> outputPanel.toggle());
-
-        Button settingsBtn = new Button("设置");
-        settingsBtn.setOnAction(e -> SettingsDialog.show(stage, root));
-
-        ToolBar bar = new ToolBar(
-                open, clone, init, new Separator(),
-                refresh, pull, push, fetch, new Separator(),
-                newBranch, mergeBtn, blameBtn, lfsBtn, new Separator(),
-                outputBtn, settingsBtn, themeBtn
-        );
-        root.setTop(bar);
+        lfsMenu.getItems().addAll(miLfsStatus, miLfsPull, miLfsFetch, miLfsTrack, miLfsPrune,
+                new SeparatorMenuItem(), miLfsInstall);
+        return lfsMenu;
     }
 
     /** 工具栏合并对话框用的分支快照(在刷新时保存)。 */
@@ -428,6 +472,7 @@ public class MainWindow {
             loadedRepoPath = null;
             root.setLeft(null);
             root.setCenter(welcome);
+            if (repoSwitcher != null) repoSwitcher.setText("未打开仓库");
             statusBar.updateRepo(null, null, false, 0, 0);
             statusBar.updateCounts(0, 0, 0, 0);
             refreshWelcomeList();
@@ -435,6 +480,15 @@ public class MainWindow {
         }
         root.setLeft(leftBox);
         if (root.getCenter() != centerCard) root.setCenter(centerCard);
+
+        // 头部:仓库切换器跟随当前仓库
+        String repoName = repo.getFileName() == null ? repo.toString() : repo.getFileName().toString();
+        String group = AppSettings.get().repos().stream()
+                .filter(r -> r.path().equals(repo.toString()))
+                .map(r -> r.group()).findFirst().orElse("");
+        repoSwitcher.setText(group.isBlank() ? repoName : repoName + " · " + group);
+        repoSwitcher.setTooltip(new Tooltip(repo.toString()));
+        refreshRepoSwitcher();
 
         // 切换到不同仓库时:立即清掉上一个仓库的内容与 Blame 页签
         if (!repo.toString().equals(loadedRepoPath)) {

@@ -34,16 +34,16 @@ public class StashPanel extends VBox {
 
     public StashPanel(Runnable refreshAll) {
         this.refreshAll = refreshAll;
-        setSpacing(6);
-        setPadding(new javafx.geometry.Insets(6));
+        setSpacing(0);
+        setPadding(javafx.geometry.Insets.EMPTY);
 
         message.setPromptText("stash 说明(可选)");
         HBox.setHgrow(message, Priority.ALWAYS);
         Button create = new Button("创建 Stash");
         create.getStyleClass().add("primary");
         create.setOnAction(e -> create());
-        HBox top = new HBox(8, message, create);
-        top.setAlignment(Pos.CENTER_LEFT);
+        HBox footer = new HBox(8, message, create);
+        footer.setAlignment(Pos.CENTER_LEFT);
 
         list.setPlaceholder(new Label("没有 stash 记录"));
         list.setCellFactory(v -> new Cell());
@@ -69,7 +69,12 @@ public class StashPanel extends VBox {
         ));
         VBox.setVgrow(list, Priority.ALWAYS);
 
-        getChildren().addAll(top, list);
+        // 内容统一 12px 侧边距(与面板头/其他页同一基准线)
+        VBox content = new VBox(6, list, footer);
+        content.setPadding(new javafx.geometry.Insets(0, 12, 6, 12));
+        VBox.setVgrow(content, Priority.ALWAYS);
+
+        getChildren().addAll(Fx.panelHead("Stash"), content);
     }
 
     private static Path repo() { return org.easygit.core.RepoManager.get().current(); }

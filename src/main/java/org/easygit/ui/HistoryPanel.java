@@ -67,17 +67,14 @@ public class HistoryPanel extends VBox {
 
     public HistoryPanel(Runnable refreshAll, java.util.function.Consumer<String> blameOpener) {
         this.refreshAll = refreshAll;
-        setSpacing(4);
-        setPadding(new Insets(6));
+        setSpacing(0);
+        setPadding(Insets.EMPTY);
 
         Button refreshBtn = new Button("刷新");
+        refreshBtn.getStyleClass().add("ghost");
         refreshBtn.setOnAction(e -> refreshAll.run());
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
         allBranches.setOnAction(e -> refresh());
-        HBox top = new HBox(10, new Label("提交历史"), allBranches, spacer, refreshBtn);
-        top.setAlignment(Pos.CENTER_LEFT);
-        top.setPadding(new Insets(0, 0, 4, 0));
+        HBox top = Fx.panelHead("提交历史", allBranches, refreshBtn);
 
         Button clearFilter = new Button("✕ 清除筛选");
         clearFilter.setOnAction(e -> clearPathFilter());
@@ -86,6 +83,14 @@ public class HistoryPanel extends VBox {
         filterBar.setAlignment(Pos.CENTER_LEFT);
         filterBar.setVisible(false);
         filterBar.setManaged(false);
+
+        // 内容统一 12px 侧边距(与面板头/变更页同一基准线)
+        VBox content = new VBox(4, filterBar, split);
+        content.setPadding(new Insets(0, 12, 0, 12));
+        VBox.setVgrow(content, Priority.ALWAYS);
+        VBox.setVgrow(split, Priority.ALWAYS);
+
+        getChildren().addAll(top, content);
 
         list.setFixedCellSize(ROW_H);
         list.setCellFactory(v -> new CommitCell());
@@ -132,10 +137,8 @@ public class HistoryPanel extends VBox {
         // 左右布局:提交列表在左,提交详情(信息/文件/查看器)在右
         split.getItems().addAll(list, detail);
         split.setDividerPositions(0.42);
-        VBox.setVgrow(split, Priority.ALWAYS);
         detail.setBlameOpener(blameOpener);
         detail.setHistoryFilter(this::filterByPath);
-        getChildren().addAll(top, filterBar, split);
     }
 
     /** 按文件路径筛选历史(只显示改动该文件的提交)。 */

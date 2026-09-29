@@ -45,6 +45,7 @@ public class RepoPanel extends VBox {
     public RepoPanel(javafx.stage.Window owner) {
         this.owner = owner;
         setSpacing(4);
+        setPadding(new javafx.geometry.Insets(6, 10, 4, 10));
 
         Label title = new Label("仓库");
         title.getStyleClass().add("section-title");

@@ -8,7 +8,6 @@ import org.easygit.core.model.FileChange;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
@@ -46,15 +45,13 @@ public class ChangesPanel extends VBox {
 
     private final ListView<FileChange> workList = new ListView<>();
     private final ListView<FileChange> stagedList = new ListView<>();
-    private final Label workTitle = sectionTitle("未暂存(含未跟踪)");
-    private final Label stagedTitle = sectionTitle("待提交");
+    private final Label workTitle = new Label("未暂存(含未跟踪)");
+    private final Label stagedTitle = new Label("待提交");
     private final TextArea msg = new TextArea();
-    private final CheckBox amend = new CheckBox("修改上次提交");
     private final Button commitBtn = new Button("提交");
-    private final javafx.scene.control.ToggleButton fileBtn = new javafx.scene.control.ToggleButton("文件视图");
-    private final javafx.scene.control.ToggleButton diffBtn = new javafx.scene.control.ToggleButton("差异视图");
+    private final javafx.scene.control.ToggleButton fileBtn = new javafx.scene.control.ToggleButton("文件");
+    private final javafx.scene.control.ToggleButton diffBtn = new javafx.scene.control.ToggleButton("差异");
     private final DiffView diffView = new DiffView();
-    private final SplitPane split = new SplitPane();
 
     /** 标记进"待提交"清单的路径(尚未真正 git add)。 */
     private final LinkedHashSet<String> toCommit = new LinkedHashSet<>();
@@ -71,28 +68,33 @@ public class ChangesPanel extends VBox {
     public ChangesPanel(Runnable refreshAll, Consumer<String> blameOpener) {
         this.refreshAll = refreshAll;
         this.blameOpener = blameOpener;
-        setSpacing(6);
-        setPadding(new Insets(6));
+        setSpacing(0);
+        setPadding(Insets.EMPTY);
 
-        // 提交框(位于待提交区下方)
-        msg.setPromptText("输入提交说明…");
-        msg.setPrefRowCount(5);
-        msg.getStyleClass().add("commit-msg");
-        commitBtn.getStyleClass().add("primary");
-        commitBtn.setOnAction(e -> doCommit());
-        Button joinAll = new Button("全部加入");
-        joinAll.setOnAction(e -> joinAll());
-        Button removeAll = new Button("全部移出");
-        removeAll.setOnAction(e -> removeAll());
-        Region commitSpacer = new Region();
-        HBox.setHgrow(commitSpacer, Priority.ALWAYS);
-        HBox commitBar = new HBox(8, amend, commitSpacer, removeAll, joinAll, commitBtn);
-        commitBar.setAlignment(Pos.CENTER_LEFT);
-        VBox commitBox = new VBox(6, msg, commitBar);
-
+        // ---- 左列:文件清单(未暂存 / 待提交,两个常驻分区) ----
         configList(workList, Area.UNSTAGED);
         configList(stagedList, Area.STAGED);
+        workTitle.getStyleClass().add("section-title");
+        stagedTitle.getStyleClass().add("section-title");
+        Button joinAll = new Button("全部加入");
+        joinAll.getStyleClass().add("ghost");
+        joinAll.setOnAction(e -> joinAll());
+        Button removeAll = new Button("全部移出");
+        removeAll.getStyleClass().add("ghost");
+        removeAll.setOnAction(e -> removeAll());
+        Region stagedSpacer = new Region();
+        HBox.setHgrow(stagedSpacer, Priority.ALWAYS);
+        HBox workHead = new HBox(workTitle);
+        workHead.getStyleClass().add("changes-head");
+        HBox stagedHead = new HBox(6, stagedTitle, stagedSpacer, removeAll, joinAll);
+        stagedHead.getStyleClass().add("changes-head");
+        stagedHead.setAlignment(Pos.CENTER_LEFT);
 
+        VBox filesCol = new VBox(0, workHead, workList, stagedHead, stagedList);
+        VBox.setVgrow(workList, Priority.ALWAYS);
+        VBox.setVgrow(stagedList, Priority.ALWAYS);
+
+        // ---- 右列:查看器(文件/差异 分段 + 统一/并排) ----
         javafx.scene.control.ToggleGroup viewGroup = new javafx.scene.control.ToggleGroup();
         diffBtn.setToggleGroup(viewGroup);
         fileBtn.setToggleGroup(viewGroup);
@@ -105,26 +107,43 @@ public class ChangesPanel extends VBox {
             mode = ViewMode.FILE;
             renderSelection();
         });
+        HBox modeSwitch = new HBox(fileBtn, diffBtn);
+        modeSwitch.getStyleClass().add("diff-mode-switch");
         Region viewerSpacer = new Region();
         HBox.setHgrow(viewerSpacer, Priority.ALWAYS);
-        HBox viewerBar = new HBox(6, diffBtn, fileBtn, viewerSpacer, diffView.makeLayoutSwitch());
-        viewerBar.setAlignment(Pos.CENTER_LEFT);
+        HBox viewerHead = new HBox(8, modeSwitch, viewerSpacer, diffView.makeLayoutSwitch());
+        viewerHead.getStyleClass().add("changes-head");
+        viewerHead.setAlignment(Pos.CENTER_LEFT);
 
-        VBox viewerBox = new VBox(4, viewerBar, diffView);
+        VBox diffCol = new VBox(0, viewerHead, diffView);
         VBox.setVgrow(diffView, Priority.ALWAYS);
 
-        VBox top = new VBox(2, workTitle, workList, stagedTitle, stagedList, commitBox);
-        top.setPadding(new Insets(0, 0, 4, 0));
-        VBox.setVgrow(workList, Priority.ALWAYS);
-        VBox.setVgrow(stagedList, Priority.ALWAYS);
-        workList.setPrefHeight(200);
-        stagedList.setPrefHeight(140);
+        // ---- 主体:横向分栏(文件清单 | 差异) ----
+        SplitPane hsplit = new SplitPane(filesCol, diffCol);
+        hsplit.setDividerPositions(0.34);
+        VBox.setVgrow(hsplit, Priority.ALWAYS);
 
-        split.getItems().addAll(top, viewerBox);
-        split.setDividerPositions(0.45);
-        VBox.setVgrow(split, Priority.ALWAYS);
+        // ---- 提交页脚:说明 + 主提交按钮(全宽底色,文字与内容同在 12px 基准线) ----
+        msg.setPromptText("输入提交说明…");
+        msg.setPrefRowCount(5);
+        // VBox 空间不足时会先把无 vgrow 的页脚压到最小——TextArea 最小=一行,
+        // 曾被压成单行输入框;钉住"最小=首选"让它不可压缩
+        msg.setMinHeight(Region.USE_PREF_SIZE);
+        msg.getStyleClass().add("commit-msg");
+        commitBtn.getStyleClass().add("primary");
+        commitBtn.setOnAction(e -> doCommit());
+        commitBtn.setPrefHeight(56);
+        HBox.setHgrow(msg, Priority.ALWAYS);
+        HBox footer = new HBox(10, msg, commitBtn);
+        footer.getStyleClass().add("commit-footer");
+        footer.setAlignment(Pos.CENTER_LEFT);
 
-        getChildren().addAll(split);
+        // 内容统一 12px 侧边距:分区头/清单/查看器全部对齐到同一基准线
+        VBox content = new VBox(0, hsplit);
+        content.setPadding(new Insets(0, 12, 0, 12));
+        VBox.setVgrow(content, Priority.ALWAYS);
+
+        getChildren().addAll(content, footer);
     }
 
     private static Label sectionTitle(String text) {
@@ -192,7 +211,7 @@ public class ChangesPanel extends VBox {
         workTitle.setText("未暂存(含未跟踪) (" + work.size() + ")"
                 + (conflicts > 0 ? "   ⚠ 冲突 " + conflicts : ""));
         stagedTitle.setText("待提交 (" + commitList.size() + ")");
-        commitBtn.setDisable(commitList.isEmpty() && !amend.isSelected());
+        commitBtn.setDisable(commitList.isEmpty());
 
         // 选中的文件已不存在时清空查看器
         if (selected != null) {
@@ -331,7 +350,6 @@ public class ChangesPanel extends VBox {
             Fx.error("无法提交", "请输入提交说明", null);
             return;
         }
-        boolean doAmend = amend.isSelected();
         List<String> toAdd = new ArrayList<>(toCommit);
         Path repo = repo();
         if (repo == null) return;
@@ -354,9 +372,8 @@ public class ChangesPanel extends VBox {
             }
             // 2. 提交(CLI:钩子/输出可见)
             List<String> args = new ArrayList<>(List.of("commit", "-m", message.strip()));
-            if (doAmend) args.add("--amend");
             GitProcess.GitResult r = GitProcess.in(repo).exec(args.toArray(String[]::new));
-            UiLog.op("git commit" + (doAmend ? " --amend" : ""), r.out(), r.err());
+            UiLog.op("git commit", r.out(), r.err());
             if (!r.ok()) throw new RuntimeException(r.message());
             String sha = NativeGit.headSha(repo);
             if (sha.isEmpty()) throw new RuntimeException("提交后无法读取 HEAD");
@@ -364,7 +381,6 @@ public class ChangesPanel extends VBox {
         }, sha -> {
             toCommit.clear();
             msg.clear();
-            amend.setSelected(false);
             String subject = message.strip().split("\n", 2)[0];
             UiLog.line("提交 ✓ " + sha.substring(0, Math.min(8, sha.length())) + "  " + subject);
             Fx.status("提交成功 " + sha.substring(0, Math.min(8, sha.length())));

@@ -20,7 +20,7 @@
     -overlay: #ffffff;
     /* ---- 文字 ---- */
     -fg: #20282a;
-    -fg-dim: #64716f;
+    -fg-dim: #5c6a68;   /* 次要文字(11px 也要 ≥4.5:1,曾因太浅在 panel2 上只有 4.33) */
     /* ---- 描边 ---- */
     -border: #dae1e0;
     -border-strong: #b6c2c0;
@@ -85,9 +85,9 @@
     -border: #2e3736;
     -border-strong: #46524f;
 
-    /* 品牌青碧(暗色):文字/选中用亮青碧,主按钮填充用深青碧(白字对比 4.5:1) */
+    /* 品牌青碧(暗色):文字/选中用亮青碧,主按钮填充用深青碧(白字对比 5.0:1) */
     -accent: #2dd4bf;
-    -accent-deep: #12857c;
+    -accent-deep: #117d74;
     -accent-soft: #113733;
 
     -green: #3fb950;  -green-soft: #12351d;
@@ -145,6 +145,25 @@
 }
 .button.ghost:hover { -fx-background-color: -panel2; -fx-border-color: transparent; }
 .button:disabled { -fx-opacity: 0.45; -fx-cursor: default; }
+
+/* ToggleButton 基础规则:兜住所有未专门样式的切换钮
+   (CommitDetailPanel 的 文件视图/列表 等曾因无规则,暗色下文字 1.34:1 完全看不见) */
+.toggle-button {
+    -fx-background-color: -panel;
+    -fx-text-fill: -fg;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-border-color: -border;
+    -fx-padding: 2 10 2 10;
+    -fx-cursor: hand;
+}
+.toggle-button:hover { -fx-background-color: -panel2; }
+.toggle-button:pressed { -fx-background-color: -border; }
+.toggle-button:selected {
+    -fx-background-color: -sel;
+    -fx-text-fill: -accent-deep;
+}
+.root.dark .toggle-button:selected { -fx-text-fill: -accent; }
 
 /* 输入框:面板底 + 细描边,聚焦描边转 accent(焦点反馈) */
 .text-field {
@@ -291,6 +310,8 @@ TabPane > .tab-header-area > .tab-header-background {
     -fx-background-color: -panel;
 }
 .tab-pane > .tab-content-area { -fx-background-color: -panel; }
+/* 点页签后 Modena 会画一圈虚线焦点框(要点别处才消失);下划线+加粗已是选中语言,隐藏之 */
+TabPane > .tab-header-area > .headers-region > .tab .focus-indicator { -fx-opacity: 0; }
 TabPane > .tab-header-area > .headers-region > .tab {
     -fx-background-color: transparent;
     -fx-padding: 4 14 4 14;
@@ -311,35 +332,63 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 }
 .tab-pane .tab-close-button { -fx-cursor: hand; }
 
-.split-pane { -fx-background-color: -bg; -fx-padding: 0; }
+/* 分栏容器透明,让三个页签(变更/历史/Stash)统一露出 panel 底色
+   (此前用 -bg,变更/历史的分栏缝隙比 Stash 深一档,看起来像没底色) */
+.split-pane { -fx-background-color: transparent; -fx-padding: 0; }
 .split-pane > .split-pane-divider { -fx-background-color: transparent; -fx-padding: 0 1 0 1; }
 
-/* 命令栏(顶栏):画布底色 + 幽灵按钮,组间分隔线;全宽附着窗口顶 */
-.tool-bar {
-    -fx-background-color: transparent;
+/* ---------- 头部条 / 面板头 ---------- */
+
+/* 头部条:应用内命令栏(窗口本身用系统标准装饰,不自绘标题栏)。
+   左锚点=仓库切换器控件,右锚点=按频率分组的动作,中间留白 */
+.header-bar {
+    -fx-background-color: -panel;
     -fx-border-color: transparent transparent -border transparent;
-    -fx-padding: 8 12 8 12;
+    -fx-padding: 6 12 6 12;
     -fx-spacing: 6;
 }
-.tool-bar .button {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-    -fx-background-radius: 6;
-    -fx-border-radius: 6;
-    -fx-padding: 3 10 3 10;
+/* 仓库切换器:命令栏里唯一的"控件感"元素,细描边小胶囊 */
+.menu-button.repo-switcher {
+    -fx-font-weight: bold;
+    -fx-padding: 4 12 4 12;
+    -fx-background-color: -panel;
+    -fx-border-color: -border;
 }
-.tool-bar .button:hover { -fx-background-color: -panel2; -fx-border-color: transparent; }
-.tool-bar .button:pressed { -fx-background-color: -border; }
-.tool-bar .menu-button {
+.menu-button.repo-switcher:hover {
+    -fx-background-color: -panel2;
+    -fx-border-color: -border-strong;
+}
+
+/* MenuButton(仓库切换器/同步/更多):幽灵化,hover 显圆角面 */
+.menu-button {
     -fx-background-color: transparent;
     -fx-border-color: transparent;
     -fx-text-fill: -fg;
     -fx-background-radius: 6;
     -fx-border-radius: 6;
-    -fx-padding: 3 6 3 10;
     -fx-cursor: hand;
 }
-.tool-bar .menu-button:hover { -fx-background-color: -panel2; }
+.menu-button:hover { -fx-background-color: -panel2; }
+/* MenuButton 的文字是内部 .label 节点:继承值输给 Modena 对 label 的直接匹配,
+   必须直接命中(否则暗色下是 #333 默认色,完全看不清) */
+.menu-button > .label { -fx-text-fill: -fg; }
+.menu-button > .arrow-button, .menu-button > .arrow-button > .arrow { -fx-background-color: transparent; }
+.menu-button > .arrow-button > .arrow { -fx-background-color: -fg-dim; }
+.menu-button.repo-switcher { -fx-font-weight: bold; -fx-padding: 4 10 4 10; }
+
+/* 面板头:所有面板共用的标题行(节奏统一的来源) */
+.panel-head { -fx-padding: 10 12 6 12; }
+.panel-title { -fx-font-weight: bold; }
+/* 变更面板的分区头/查看器头(水平缩进由 12px 内容 wrapper 负责,这里只管纵向节奏) */
+.changes-head { -fx-padding: 8 0 4 0; }
+
+/* 提交页脚:变更面板底部的提交卡 */
+.commit-footer {
+    -fx-background-color: -panel2;
+    -fx-border-color: -border transparent transparent transparent;
+    -fx-padding: 10 12 10 12;
+    -fx-spacing: 10;
+}
 
 /* 滚动条:无轨道,细圆角滑块,hover 加深 */
 .scroll-bar { -fx-background-color: transparent; }
@@ -359,14 +408,12 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .label.h2 { -fx-font-size: 15px; -fx-font-weight: bold; }
 .mono { -fx-font-family: "Consolas", "Menlo", "DejaVu Sans Mono", "Noto Sans Mono", monospace; }
 
-/* ---------- 布局:画布 + 浮动卡片 ---------- */
+/* ---------- 布局:面板全出血(桌面风) ---------- */
 
-/* 卡片:内容表面浮在画布(-bg)上,圆角 8 + 细描边,不用投影 */
-.card {
+/* 面板贴满窗口,不搞网页式留白;区域之间靠 1px hairline 分界 */
+.side-panel {
     -fx-background-color: -panel;
-    -fx-background-radius: 8;
-    -fx-border-radius: 8;
-    -fx-border-color: -border;
+    -fx-border-color: transparent -border transparent transparent;
 }
 
 /* 分隔线:走描边令牌(横/竖两个方向) */
@@ -414,11 +461,14 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
     -fx-background-radius: 10;
     -fx-font-size: 11px;
 }
-.chip-branch { -fx-background-color: -accent-soft; -fx-text-fill: -accent; -fx-font-weight: bold; }
+/* 青碧"作为文字"用在浅 tint 上时,亮色主题必须用 -accent-deep(对比 ≥6),
+   暗色主题用亮青碧(-accent,对比 ~7);否则只有 4.4:1,小字看不清 */
+.chip-branch { -fx-background-color: -accent-soft; -fx-text-fill: -accent-deep; -fx-font-weight: bold; }
 .chip-head { -fx-background-color: -amber-soft; -fx-text-fill: -amber; -fx-font-weight: bold; }
 .chip-tag { -fx-background-color: -purple-soft; -fx-text-fill: -purple; }
-.chip-remote { -fx-background-color: -accent-soft; -fx-text-fill: -accent; }
+.chip-remote { -fx-background-color: -accent-soft; -fx-text-fill: -accent-deep; }
 .chip-unpushed { -fx-background-color: -amber-soft; -fx-text-fill: -amber; -fx-font-weight: bold; }
+.root.dark .chip-branch, .root.dark .chip-remote { -fx-text-fill: -accent; }
 
 .status-letter {
     -fx-font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace;
@@ -433,7 +483,8 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .status-letter.add { -fx-background-color: -green-soft; -fx-text-fill: -green; }
 .status-letter.mod { -fx-background-color: -amber-soft; -fx-text-fill: -amber; }
 .status-letter.del { -fx-background-color: -red-soft; -fx-text-fill: -red; }
-.status-letter.ren { -fx-background-color: -accent-soft; -fx-text-fill: -accent; }
+.status-letter.ren { -fx-background-color: -accent-soft; -fx-text-fill: -accent-deep; }
+.root.dark .status-letter.ren { -fx-text-fill: -accent; }
 .status-letter.conflict { -fx-background-color: -red-soft; -fx-text-fill: -red; }
 .status-letter.untracked { -fx-background-color: -panel2; -fx-text-fill: -fg-dim; }
 
@@ -468,7 +519,8 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .diff-del  { -fx-background-color: -red-soft; }
 .diff-ctx  { -fx-background-color: transparent; }
 .diff-hunk { -fx-background-color: -accent-soft; }
-.diff-hunk .label { -fx-text-fill: -accent; }
+.diff-hunk .label { -fx-text-fill: -accent-deep; }
+.root.dark .diff-hunk .label { -fx-text-fill: -accent; }
 /* 与 .diff-* .label 同权重，靠"写在后面"取胜，保证行号仍是暗色 */
 .diff-row .diff-no { -fx-text-fill: -fg-dim; }
 
@@ -486,6 +538,10 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .list-cell:selected .diff-hunk { -fx-background-color: -accent-sel; }
 .list-cell:selected .diff-row  { -fx-border-color: transparent transparent transparent -accent; }
 .list-cell:selected .diff-file-header { -fx-background-color: -sel; }
+/* 选中行上的次要文字(tint 底上 fg-dim 在暗色只有 ~3.6:1)提为主文字色 */
+.list-cell:selected .diff-no, .list-cell:selected .dim,
+.list-cell:selected .row-sub, .list-cell:selected .commit-meta,
+.list-cell:selected .file-stat { -fx-text-fill: -fg; }
 
 .diff-no { -fx-padding: 0 6 0 0; }
 .diff-file-header {
@@ -521,9 +577,10 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .diff-mode-switch .toggle-button:hover { -fx-text-fill: -fg; }
 .diff-mode-switch .toggle-button:selected {
     -fx-background-color: -sel;
-    -fx-text-fill: -accent;
+    -fx-text-fill: -accent-deep;
     -fx-font-weight: bold;
 }
+.root.dark .diff-mode-switch .toggle-button:selected { -fx-text-fill: -accent; }
 .diff-mode-switch .toggle-button:disabled {
     -fx-opacity: 0.45;
     -fx-cursor: default;

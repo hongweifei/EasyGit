@@ -1,12 +1,16 @@
 package org.easygit.ui;
 
 import javafx.application.Platform;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -30,6 +34,19 @@ public final class Fx {
     private static volatile Consumer<String> messageListener;
 
     private Fx() {}
+
+    /** 统一的面板头:标题 + 可选右侧操作。所有面板共用,保证节奏一致。 */
+    public static HBox panelHead(String title, Node... right) {
+        Label t = new Label(title);
+        t.getStyleClass().add("panel-title");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox h = new HBox(8, t, spacer);
+        h.getChildren().addAll(right);
+        h.setAlignment(Pos.CENTER_LEFT);
+        h.getStyleClass().add("panel-head");
+        return h;
+    }
 
     public static void bindStatus(Consumer<String> busy, Consumer<String> message) {
         busyListener = busy;
@@ -74,9 +91,18 @@ public final class Fx {
 
     // ---------- 对话框 ----------
 
-    /** 给对话框的独立窗口挂上应用图标(在 show 之前调用)。 */
+    /** 给对话框的独立窗口挂上应用图标并应用主题(在 show 之前调用)。
+    对话框是独立场景,不带主窗口的样式表;不挂的话暗色模式下弹窗是裸 Modena,
+    令牌 lookup 也全部失效。 */
     public static void icon(javafx.scene.control.Dialog<?> d) {
-        d.getDialogPane().sceneProperty().addListener((o, ov, nv) -> {
+        var pane = d.getDialogPane();
+        String css = Fx.class.getResource("/css/theme.css").toExternalForm();
+        if (!pane.getStylesheets().contains(css)) pane.getStylesheets().add(css);
+        if ("dark".equals(org.easygit.core.AppSettings.get().theme())
+                && !pane.getStyleClass().contains("dark")) {
+            pane.getStyleClass().add("dark");
+        }
+        pane.sceneProperty().addListener((o, ov, nv) -> {
             if (nv != null && nv.getWindow() instanceof javafx.stage.Stage st && st.getIcons().isEmpty()) {
                 for (String s : new String[]{"icons/icon_16.png", "icons/icon_32.png", "icons/icon_48.png"}) {
                     var url = Fx.class.getResource("/" + s);

@@ -3,6 +3,7 @@ package org.easygit.ui;
 import org.easygit.core.JGitService;
 import org.easygit.core.model.BranchInfo;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
@@ -12,6 +13,7 @@ import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import java.nio.file.Path;
@@ -35,22 +37,45 @@ public class BranchPanel extends VBox {
     private final Label trackLabel = new Label();
     private final TreeView<TNode> tree = new TreeView<>();
     private final Runnable refreshAll;
+    private Runnable newBranchAction = () -> {};
+    private Runnable mergeAction = () -> {};
+
+    /** 注入分支操作(由 MainWindow 提供弹窗与刷新)。 */
+    public void setActions(Runnable newBranch, Runnable merge) {
+        this.newBranchAction = newBranch;
+        this.mergeAction = merge;
+    }
 
     public BranchPanel(Runnable refreshAll) {
         this.refreshAll = refreshAll;
-        setSpacing(4);
-        setPadding(new javafx.geometry.Insets(6));
+        setSpacing(6);
+        setPadding(new javafx.geometry.Insets(6, 10, 4, 10));
 
-        currentLabel.getStyleClass().add("h2");
-        trackLabel.getStyleClass().add("dim");
-        HBox header = new HBox(8, currentLabel, trackLabel);
-        header.setAlignment(Pos.CENTER_LEFT);
+        // 区头:标题 + 右侧操作(新建/合并归位于分支语境,不再占全局工具栏)
+        Label sec = new Label("分支");
+        sec.getStyleClass().add("section-title");
+        Region headSpacer = new Region();
+        HBox.setHgrow(headSpacer, Priority.ALWAYS);
+        Button newBranchBtn = new Button("新建分支");
+        newBranchBtn.getStyleClass().add("ghost");
+        newBranchBtn.setOnAction(e -> newBranchAction.run());
+        Button mergeBtn = new Button("合并");
+        mergeBtn.getStyleClass().add("ghost");
+        mergeBtn.setOnAction(e -> mergeAction.run());
+        HBox head = new HBox(4, sec, headSpacer, newBranchBtn, mergeBtn);
+        head.setAlignment(Pos.CENTER_LEFT);
+
+        // 当前分支:高亮 chip + 上游跟踪(次行小字)
+        currentLabel.getStyleClass().addAll("chip", "chip-branch");
+        trackLabel.getStyleClass().add("row-sub");
+        HBox branchRow = new HBox(8, currentLabel, trackLabel);
+        branchRow.setAlignment(Pos.CENTER_LEFT);
 
         tree.setShowRoot(false);
         tree.setCellFactory(v -> new Cell());
         VBox.setVgrow(tree, Priority.ALWAYS);
 
-        getChildren().addAll(new Label("分支"), header, new javafx.scene.control.Separator(), tree);
+        getChildren().addAll(head, branchRow, tree);
     }
 
     private static Path repo() { return org.easygit.core.RepoManager.get().current(); }
