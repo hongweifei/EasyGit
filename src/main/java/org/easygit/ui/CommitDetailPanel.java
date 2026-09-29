@@ -552,7 +552,12 @@ public class CommitDetailPanel extends VBox {
             path.setMinWidth(0);
             path.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(path, Priority.ALWAYS);
-            HBox box = new HBox(8, dot(displayPath(f)), path);
+            // 增删行数徽标(设计语言:语义色 + 等宽字)
+            Label addStat = new Label("+" + f.added);
+            addStat.getStyleClass().addAll("mono", "stat-add");
+            Label delStat = new Label("-" + f.deleted);
+            delStat.getStyleClass().addAll("mono", "stat-del");
+            HBox box = new HBox(8, dot(displayPath(f)), path, addStat, delStat);
             box.setAlignment(Pos.CENTER_LEFT);
             if (getListView() != null) {
                 box.prefWidthProperty().bind(getListView().widthProperty().subtract(30));

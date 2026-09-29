@@ -22,10 +22,10 @@ public class StatusBar extends HBox {
     private final Label counts = new Label();
 
     public StatusBar() {
+        getStyleClass().add("status-bar");
         setAlignment(Pos.CENTER_LEFT);
         setPadding(new Insets(4, 10, 4, 10));
         setSpacing(10);
-        setStyle("-fx-background-color: -panel; -fx-border-color: -border transparent transparent transparent;");
 
         repoLabel.getStyleClass().add("dim");
         branchChip.getStyleClass().addAll("chip", "chip-branch");

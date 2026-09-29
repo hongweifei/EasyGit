@@ -57,6 +57,8 @@ public class MainWindow {
     private String loadedRepoPath;
 
     private Tab changesTab, historyTab, stashTab;
+    /** 中部页签的卡片容器(设计语言:画布 + 浮动卡片)。 */
+    private VBox centerCard;
 
     public MainWindow(Stage stage) {
         this.stage = stage;
@@ -141,10 +143,20 @@ public class MainWindow {
         historyTab.setClosable(false);
         stashTab.setClosable(false);
         tabs.getTabs().addAll(changesTab, historyTab, stashTab);
+        // 设计语言:画布 + 浮动卡片 —— 左侧(仓库/分支)一张卡,中部页签一张卡,
+        // 顶部命令栏与底部状态条全宽附着,卡片与画布之间留 8px 呼吸缝
         leftBox = new VBox(4, repoPanel, new Separator(), branchPanel);
+        leftBox.getStyleClass().add("card");
         leftBox.setPrefWidth(300);
         leftBox.setMinWidth(220);
+        centerCard = new VBox(tabs);
+        centerCard.getStyleClass().add("card");
+        VBox.setVgrow(tabs, Priority.ALWAYS);
+        BorderPane.setMargin(leftBox, new Insets(8, 0, 8, 8));
+        // 缝隙由「中卡自身的四向 margin」制造:BorderPane 摆中心区只参考中心节点自己的 margin
+        BorderPane.setMargin(centerCard, new Insets(8, 8, 8, 8));
         root.setLeft(leftBox);
+        root.setCenter(centerCard);
     }
 
     private void buildToolbar() {
@@ -333,16 +345,12 @@ public class MainWindow {
         Label sub = new Label("原生 JavaFX Git 客户端 · 快速 · 轻量");
         sub.getStyleClass().add("welcome-sub");
 
-        Button open = new Button("打开仓库…");
-        open.setOnAction(e -> Dialogs.openRepo(stage));
-        Button clone = new Button("克隆仓库…");
-        clone.setOnAction(e -> Dialogs.cloneRepo(stage));
-        Button init = new Button("初始化新仓库…");
-        init.setOnAction(e -> Dialogs.initRepo(stage));
-        for (Button b : new Button[]{open, clone, init}) {
-            b.setMaxWidth(220);
-            b.setPrefHeight(36);
-        }
+        // 快捷入口:卡片式 hero(设计语言 v1),替代三个长条按钮
+        HBox actions = new HBox(12,
+                actionCard("⌂", "打开仓库", "浏览本地已有的 git 仓库", () -> Dialogs.openRepo(stage)),
+                actionCard("⇩", "克隆仓库", "从远程 URL 克隆(支持 LFS)", () -> Dialogs.cloneRepo(stage)),
+                actionCard("✚", "初始化新仓库", "在空目录创建新的仓库", () -> Dialogs.initRepo(stage)));
+        actions.setAlignment(Pos.CENTER);
 
         Label recentTitle = new Label("我的仓库:");
         recentTitle.getStyleClass().add("h2");
@@ -352,12 +360,23 @@ public class MainWindow {
         List<AppSettings.RepoEntry> managed = AppSettings.get().repos();
         recent.getItems().addAll(managed);
         recent.setCellFactory(v -> new javafx.scene.control.ListCell<>() {
+            private VBox box;
+            private Label name, path;
             @Override
             protected void updateItem(AppSettings.RepoEntry e, boolean empty) {
                 super.updateItem(e, empty);
                 if (empty || e == null) { setText(null); setGraphic(null); return; }
-                String group = e.group().isBlank() ? "未分组" : e.group();
-                setText("【" + group + "】" + e.name() + "  —  " + e.path());
+                if (box == null) {
+                    setText(null);
+                    name = new Label();
+                    name.getStyleClass().add("file-name");
+                    path = new Label();
+                    path.getStyleClass().add("row-sub");
+                    box = new VBox(1, name, path);
+                }
+                name.setText((e.group().isBlank() ? "未分组" : e.group()) + " · " + e.name());
+                path.setText(e.path());
+                setGraphic(box);
             }
         });
         recent.setOnMouseClicked(e -> {
@@ -377,9 +396,26 @@ public class MainWindow {
         Region spacerBottom = new Region();
         VBox.setVgrow(spacerTop, Priority.ALWAYS);
         VBox.setVgrow(spacerBottom, Priority.ALWAYS);
-        box.getChildren().addAll(spacerTop, title, sub, new Region(),
-                open, clone, init, recentTitle, recent, gitInfo, spacerBottom);
+        box.getChildren().addAll(spacerTop, title, sub, new Region(), actions,
+                recentTitle, recent, gitInfo, spacerBottom);
         return box;
+    }
+
+    /** 欢迎页快捷入口卡片:面板底 + 细描边,hover 描边转 accent。 */
+    private VBox actionCard(String glyph, String title, String desc, Runnable action) {
+        Label g = new Label(glyph);
+        g.getStyleClass().add("action-glyph");
+        Label t = new Label(title);
+        t.getStyleClass().add("action-title");
+        Label d = new Label(desc);
+        d.getStyleClass().add("action-desc");
+        d.setWrapText(true);
+        VBox card = new VBox(6, g, t, d);
+        card.getStyleClass().add("action-card");
+        card.setPrefWidth(220);
+        card.setCursor(javafx.scene.Cursor.HAND);
+        card.setOnMouseClicked(e -> action.run());
+        return card;
     }
 
     // ---------- 刷新 ----------
@@ -398,7 +434,7 @@ public class MainWindow {
             return;
         }
         root.setLeft(leftBox);
-        if (root.getCenter() != tabs) root.setCenter(tabs);
+        if (root.getCenter() != centerCard) root.setCenter(centerCard);
 
         // 切换到不同仓库时:立即清掉上一个仓库的内容与 Blame 页签
         if (!repo.toString().equals(loadedRepoPath)) {

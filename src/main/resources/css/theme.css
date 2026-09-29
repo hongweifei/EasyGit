@@ -284,10 +284,13 @@
 
 /* 标签页:下划线式选中(VS Code 风)。
    选中 tab 底边 2px accent + 文字加重;类型前缀 TabPane 提权,压过 Modena
-   同形规则与 .tab:top(方位伪类,权重更高)的背景 */
+   同形规则与 .tab:top(方位伪类,权重更高)的背景。
+   页签区整体融入所在卡片:页签头/内容区都是 -panel。 */
+.tab-pane { -fx-background-color: transparent; }
 TabPane > .tab-header-area > .tab-header-background {
-    -fx-background-color: -bg;
+    -fx-background-color: -panel;
 }
+.tab-pane > .tab-content-area { -fx-background-color: -panel; }
 TabPane > .tab-header-area > .headers-region > .tab {
     -fx-background-color: transparent;
     -fx-padding: 4 14 4 14;
@@ -311,13 +314,32 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .split-pane { -fx-background-color: -bg; -fx-padding: 0; }
 .split-pane > .split-pane-divider { -fx-background-color: transparent; -fx-padding: 0 1 0 1; }
 
+/* 命令栏(顶栏):画布底色 + 幽灵按钮,组间分隔线;全宽附着窗口顶 */
 .tool-bar {
-    -fx-background-color: -panel;
+    -fx-background-color: transparent;
     -fx-border-color: transparent transparent -border transparent;
-    -fx-padding: 6 10 6 10;
+    -fx-padding: 8 12 8 12;
     -fx-spacing: 6;
 }
-.tool-bar .button { -fx-padding: 3 10 3 10; }
+.tool-bar .button {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 3 10 3 10;
+}
+.tool-bar .button:hover { -fx-background-color: -panel2; -fx-border-color: transparent; }
+.tool-bar .button:pressed { -fx-background-color: -border; }
+.tool-bar .menu-button {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-text-fill: -fg;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 3 6 3 10;
+    -fx-cursor: hand;
+}
+.tool-bar .menu-button:hover { -fx-background-color: -panel2; }
 
 /* 滚动条:无轨道,细圆角滑块,hover 加深 */
 .scroll-bar { -fx-background-color: transparent; }
@@ -336,6 +358,52 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .label.h1 { -fx-font-size: 22px; -fx-font-weight: bold; }
 .label.h2 { -fx-font-size: 15px; -fx-font-weight: bold; }
 .mono { -fx-font-family: "Consolas", "Menlo", "DejaVu Sans Mono", "Noto Sans Mono", monospace; }
+
+/* ---------- 布局:画布 + 浮动卡片 ---------- */
+
+/* 卡片:内容表面浮在画布(-bg)上,圆角 8 + 细描边,不用投影 */
+.card {
+    -fx-background-color: -panel;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-border-color: -border;
+}
+
+/* 分隔线:走描边令牌(横/竖两个方向) */
+.separator:horizontal .line { -fx-border-color: -border transparent transparent transparent; }
+.separator:vertical .line { -fx-border-color: transparent transparent transparent -border; }
+
+/* 底部状态条 / 输出面板:全宽附着条 */
+.status-bar {
+    -fx-background-color: -panel;
+    -fx-border-color: -border transparent transparent transparent;
+}
+.output-panel {
+    -fx-background-color: -panel2;
+    -fx-border-color: -border transparent transparent transparent;
+}
+
+/* ---------- 欢迎页 hero ---------- */
+
+.action-card {
+    -fx-background-color: -panel;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-border-color: -border;
+    -fx-padding: 16;
+    -fx-cursor: hand;
+}
+.action-card:hover { -fx-border-color: -accent; }
+.action-glyph { -fx-font-size: 22px; -fx-text-fill: -accent; }
+.action-title { -fx-font-size: 14px; -fx-font-weight: bold; }
+.action-desc { -fx-text-fill: -fg-dim; -fx-font-size: 12px; }
+
+/* 列表行副行(最近仓库路径等) */
+.row-sub { -fx-text-fill: -fg-dim; -fx-font-size: 11px; }
+
+/* 文件行增删徽标 */
+.stat-add { -fx-text-fill: -green; }
+.stat-del { -fx-text-fill: -red; }
 
 /* ---------- 徽标 / 状态 ---------- */
 

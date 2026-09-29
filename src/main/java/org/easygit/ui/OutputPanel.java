@@ -25,9 +25,9 @@ public class OutputPanel extends VBox {
     private final TextArea console = new TextArea();
 
     public OutputPanel() {
+        getStyleClass().add("output-panel");
         setSpacing(2);
         setPadding(new Insets(2, 6, 2, 6));
-        setStyle("-fx-background-color: -panel2; -fx-border-color: -border transparent transparent transparent;");
         setMaxHeight(220);
 
         console.setEditable(false);
