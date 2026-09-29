@@ -1,34 +1,65 @@
-/* EasyGit 主题 —— 亮色默认,根节点加 .dark 切换暗色 */
+/* ============================================================
+   EasyGit 设计语言 v1 —— 克制扁平 · 开发者风 · 青碧 Teal
+   ============================================================
+   原则:
+     1. 分层表面: -bg(页面) / -panel(面板·卡片) / -panel2(悬停·下沉) / -overlay(弹层)
+     2. 细描边: 平面用 1px -border 描边,投影只给弹层(菜单/提示)
+     3. accent 点睛: 青碧只用于选中/主按钮/链接/焦点,不大面积铺色
+     4. 圆角三档: -radius-s 4 / -radius 6 / -radius-l 8
+     5. 亮暗双主题: .root 默认亮色,加 .dark 切暗色,两套完整令牌
+   令牌文档见 DESIGN.md。改令牌即全局生效;控件规则里不要写死颜色,
+   新增 UI 一律引用令牌。亮色 -accent 是"文字级"(对比度优先),
+   按钮等填充走 -accent-deep;暗色下两档互换角色(见各自注释)。
+   ============================================================ */
 
 .root {
-    -bg: #f5f6f8;
+    /* ---- 表面 ---- */
+    -bg: #f2f5f5;
     -panel: #ffffff;
-    -panel2: #eef0f3;
-    -fg: #24292f;
-    -fg-dim: #6a737d;
-    -border: #d8dce2;
-    -accent: #0969da;
-    -accent-soft: #ddf4ff;
-    -green: #1a7f37;
-    -green-soft: #dafbe1;
-    -red: #cf222e;
-    -red-soft: #ffebe9;
-    -amber: #9a6700;
-    -amber-soft: #fff8c5;
-    -purple: #8250df;
-    -purple-soft: #fbefff;
-    -sel: #dbeafe;
+    -panel2: #e9eeed;
+    -overlay: #ffffff;
+    /* ---- 文字 ---- */
+    -fg: #20282a;
+    -fg-dim: #64716f;
+    /* ---- 描边 ---- */
+    -border: #dae1e0;
+    -border-strong: #b6c2c0;
+    /* ---- 品牌青碧(亮色) ---- */
+    -accent: #0f766e;        /* 文字级:链接/选中文字/强调,白底对比 5.5:1 */
+    -accent-deep: #0b5d57;   /* 填充级:主按钮/勾选框底,白字对比 6.9:1 */
+    -accent-soft: #d5ebe8;   /* 面积型 tint:hunk 头/徽标底 */
+    /* ---- 语义色 ---- */
+    -green: #1a7f37;  -green-soft: #dafbe1;
+    -red: #cf222e;    -red-soft: #ffebe9;
+    -amber: #9a6700;  -amber-soft: #fff8c5;
+    -purple: #8250df; -purple-soft: #fbefff;
+    /* ---- 选中 ---- */
+    -sel: #d2e8e5;
     /* diff 行选中时的底色：由 soft 色向 -sel 靠拢，保证与相邻未选中行可辨 */
     -green-sel: #c3f0cd;
     -red-sel: #ffd9d5;
-    -accent-sel: #c2e9ff;
+    -accent-sel: #c6e7e3;
+    /* ---- 圆角(三档字面量:4=徽标/行内悬停, 6=按钮/输入框, 8=弹层/卡片) ----
+       注意:JavaFX CSS 的 lookup 只支持颜色,数值类属性(-fx-*-radius)写
+       -radius 会 ClassCastException 且静默失效,必须写字面量 */
+
+    /* ---- Modena 桥接(亮色) ----
+       显式规则覆盖不到的控件内部(焦点环/选中条/勾选标记)统一走品牌色 */
+    -fx-background: -bg;
+    -fx-control-inner-background: -panel;
+    -fx-accent: -accent;
+    -fx-focus-color: -accent;
+    -fx-faint-focus-color: derive(-accent, 80%);
+    -fx-selection-bar: -sel;
+    -fx-selection-bar-non-focused: -panel2;
+    -fx-mark-color: -fg-dim;
+    -fx-box-border: -border;
 
     /* 钉死 Modena 的"文字色变量"。
        Modena 用 ladder(-fx-background, …) 推导控件文字色,而选中行会把
-       -fx-background 换成 -fx-selection-bar(亮色下即 -fx-accent #0096C9,
-       亮度约 26% < 45% 阈值)→ 嵌套 Label 的文字直接变白;
-       但我们实际绘制的行底色仍是浅色(增删行底纹 / -sel),于是白字看不见。
-       这里把它固定为 -fg,一次性消除整类故障(diff 行、历史、文件列表等)。 */
+       -fx-background 换成 -fx-selection-bar,亮度低于 45% 阈值时推导出
+       白色文字;但我们实际绘制的行底色仍是浅色(增删行底纹 / -sel),
+       白字看不见。这里固定为 -fg,一次性消除整类故障。 */
     -fx-text-background-color: -fg;
 
     -fx-background-color: -bg;
@@ -43,35 +74,43 @@
 .root .dim { -fx-text-fill: -fg-dim; }
 
 .root.dark {
-    -bg: #1e2227;
-    -panel: #252a31;
-    -panel2: #2d333b;
-    -fg: #e6e8eb;
-    -fg-dim: #9aa4af;
-    -border: #3a4048;
-    -accent: #58a6ff;
-    -accent-soft: #1f3a5f;
-    -green: #3fb950;
-    -green-soft: #12351d;
-    -red: #f85149;
-    -red-soft: #4a1e20;
-    -amber: #d29922;
-    -amber-soft: #3f2e0a;
-    -purple: #a371f7;
-    -purple-soft: #2d2247;
-    -sel: #2d4a6b;
+    -bg: #191d1e;
+    -panel: #1f2526;
+    -panel2: #272e2f;
+    -overlay: #232a2b;
+
+    -fg: #e2e7e6;
+    -fg-dim: #92a09e;
+
+    -border: #2e3736;
+    -border-strong: #46524f;
+
+    /* 品牌青碧(暗色):文字/选中用亮青碧,主按钮填充用深青碧(白字对比 4.5:1) */
+    -accent: #2dd4bf;
+    -accent-deep: #12857c;
+    -accent-soft: #113733;
+
+    -green: #3fb950;  -green-soft: #12351d;
+    -red: #f85149;    -red-soft: #4a1e20;
+    -amber: #d29922;  -amber-soft: #3f2e0a;
+    -purple: #a371f7; -purple-soft: #2d2247;
+
+    -sel: #1f4642;
     -green-sel: #1e4d2b;
     -red-sel: #6a2b2c;
-    -accent-sel: #24486e;
+    -accent-sel: #1c4a44;
 
-    /* 桥接 Modena 内部变量:控件默认文字色由 -fx-background 亮度推导,
+    /* Modena 桥接(暗色):控件默认文字色由 -fx-background 亮度推导,
        不覆盖它的话暗色背景上仍是深色文字(看不清的主因) */
-    -fx-background: #1e2227;
-    -fx-control-inner-background: #2d333b;
-    -fx-accent: #58a6ff;
-    -fx-selection-bar: #2d4a6b;
-    -fx-selection-bar-non-focused: #2d3a4d;
-    -fx-box-border: #3a4048;
+    -fx-background: -bg;
+    -fx-control-inner-background: -panel2;
+    -fx-accent: -accent;
+    -fx-focus-color: -accent;
+    -fx-faint-focus-color: derive(-accent, 85%);
+    -fx-selection-bar: -sel;
+    -fx-selection-bar-non-focused: -panel2;
+    -fx-mark-color: -fg-dim;
+    -fx-box-border: -border;
 
     -fx-background-color: -bg;
     -fx-text-fill: -fg;
@@ -79,6 +118,7 @@
 
 /* ---------- 通用控件 ---------- */
 
+/* 按钮:面板底 + 细描边,hover 描边加深一档;投影不做(克制) */
 .button {
     -fx-background-color: -panel;
     -fx-text-fill: -fg;
@@ -86,18 +126,27 @@
     -fx-border-radius: 6;
     -fx-border-color: -border;
     -fx-padding: 4 12 4 12;
+    -fx-background-insets: 0;
     -fx-cursor: hand;
 }
-.button:hover { -fx-background-color: -panel2; }
+.button:hover { -fx-background-color: -panel2; -fx-border-color: -border-strong; }
 .button:pressed { -fx-background-color: -border; }
 .button.primary {
-    -fx-background-color: -accent;
+    -fx-background-color: -accent-deep;
     -fx-text-fill: white;
     -fx-border-color: transparent;
 }
-.button.primary:hover { -fx-opacity: 0.9; }
+.button.primary:hover { -fx-opacity: 0.92; }
+.button.primary:pressed { -fx-opacity: 0.85; }
+/* 幽灵按钮:无边框纯文字,工具栏次要操作用 */
+.button.ghost {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+.button.ghost:hover { -fx-background-color: -panel2; -fx-border-color: transparent; }
 .button:disabled { -fx-opacity: 0.45; -fx-cursor: default; }
 
+/* 输入框:面板底 + 细描边,聚焦描边转 accent(焦点反馈) */
 .text-field {
     -fx-background-color: -panel;
     -fx-text-fill: -fg;
@@ -111,46 +160,85 @@
     -fx-text-fill: -fg;
     -fx-border-color: -border;
     -fx-background-radius: 6;
+    -fx-border-radius: 6;
 }
 .text-area .content { -fx-background-color: transparent; }
+.text-field:focused, .text-area:focused {
+    -fx-border-color: -accent;
+    -fx-background-color: -panel;
+}
 .text-field, .text-area {
     -fx-prompt-text-fill: -fg-dim;
 }
 
-/* 下拉框弹层跟随主题 */
+/* 下拉框:同输入框;显示区透明,箭头走 -fg-dim */
+.combo-box-base {
+    -fx-background-color: -panel;
+    -fx-border-color: -border;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-background-insets: 0;
+}
+.combo-box > .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -fg;
+    -fx-padding: 4 6 4 8;
+}
+.combo-box .arrow-button { -fx-background-color: transparent; }
+.combo-box .arrow { -fx-background-color: -fg-dim; }
+.combo-box-base:focused {
+    -fx-border-color: -accent;
+    -fx-background-color: -panel;
+}
+/* 弹层跟随主题,带弹层投影(无圆角:单元满幅铺,圆角会被单元底色盖掉) */
 .combo-box-popup .list-view {
     -fx-background-color: -panel;
     -fx-border-color: -border;
-}
-.combo-box-popup .list-cell {
-    -fx-background-color: -panel;
-    -fx-text-fill: -fg;
-}
-.combo-box-popup .list-cell:filled:hover,
-.combo-box-popup .list-cell:filled:selected {
-    -fx-background-color: -sel;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.18), 14, 0.12, 0, 4);
 }
 
-/* 菜单跟随主题 */
+/* 菜单:弹层表面 + 圆角 + 唯一允许的投影;条目悬停圆角块 */
 .context-menu {
-    -fx-background-color: -panel;
+    -fx-background-color: -overlay;
     -fx-border-color: -border;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
     -fx-padding: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.18), 14, 0.12, 0, 4);
+}
+.menu-item {
+    -fx-background-radius: 4;
+    -fx-background-insets: 0 2 0 2;
 }
 .menu-item > .label { -fx-text-fill: -fg; }
 .menu-item:hover, .menu-item:focused {
     -fx-background-color: -sel;
 }
 
+/* 提示气泡:弹层表面 */
+.tooltip {
+    -fx-background-color: -overlay;
+    -fx-text-fill: -fg;
+    -fx-border-color: -border;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-padding: 4 8 4 8;
+    -fx-font-size: 12px;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.16), 10, 0.1, 0, 3);
+}
+
+/* 列表:单元透明,悬停/选中为两侧留白 4px 的圆角块(JetBrains 新 UI 风) */
 .list-view {
     -fx-background-color: -panel;
     -fx-border-color: -border;
     -fx-background-insets: 0;
 }
 .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell {
-    -fx-background-color: -panel;
+    -fx-background-color: transparent;
     -fx-text-fill: -fg;
-    -fx-padding: 2 8 2 8;
+    -fx-padding: 2 6 2 6;
+    -fx-background-insets: 0 4 0 4;
+    -fx-background-radius: 4;
 }
 .list-view > .virtual-flow > .clipped-container > .sheet > .list-cell:filled:hover {
     -fx-background-color: -panel2;
@@ -159,6 +247,7 @@
     -fx-background-color: -sel;
 }
 
+/* 树:同列表,留白更窄 */
 .tree-view {
     -fx-background-color: transparent;
     -fx-border-color: transparent;
@@ -167,25 +256,53 @@
     -fx-background-color: transparent;
     -fx-text-fill: -fg;
     -fx-padding: 2 4 2 4;
+    -fx-background-insets: 0 2 0 2;
+    -fx-background-radius: 4;
+}
+.tree-view > .virtual-flow > .clipped-container > .sheet > .tree-cell:filled:hover {
+    -fx-background-color: -panel2;
 }
 .tree-view > .virtual-flow > .clipped-container > .sheet > .tree-cell:selected {
     -fx-background-color: -sel;
 }
 
-.tab-pane > .tab-header-area > .tab-header-background {
-    -fx-background-color: -panel2;
+/* 复选框:方框 4px 圆角,选中填充 accent-deep + 白勾 */
+.check-box { -fx-text-fill: -fg; -fx-cursor: hand; }
+.check-box > .box {
+    -fx-background-color: -panel;
+    -fx-border-color: -border-strong;
+    -fx-border-width: 1;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
 }
-.tab-pane > .tab-header-area > .headers-region > .tab {
+.check-box:hover > .box { -fx-border-color: -fg-dim; }
+.check-box:selected > .box {
+    -fx-background-color: -accent-deep;
+    -fx-border-color: -accent-deep;
+}
+.check-box:selected > .box > .mark { -fx-background-color: white; }
+
+/* 标签页:下划线式选中(VS Code 风)。
+   选中 tab 底边 2px accent + 文字加重;类型前缀 TabPane 提权,压过 Modena
+   同形规则与 .tab:top(方位伪类,权重更高)的背景 */
+TabPane > .tab-header-area > .tab-header-background {
+    -fx-background-color: -bg;
+}
+TabPane > .tab-header-area > .headers-region > .tab {
     -fx-background-color: transparent;
     -fx-padding: 4 14 4 14;
+    -fx-border-width: 0;
 }
-.tab-pane > .tab-header-area > .headers-region > .tab > .tab-container > .tab-label {
+TabPane > .tab-header-area > .headers-region > .tab > .tab-container > .tab-label {
     -fx-text-fill: -fg-dim;
 }
-.tab-pane > .tab-header-area > .headers-region > .tab:selected {
-    -fx-background-color: -panel;
+TabPane > .tab-header-area > .headers-region > .tab:selected {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent transparent -accent transparent;
+    -fx-border-width: 0 0 2 0;
+    -fx-border-insets: 0;
 }
-.tab-pane > .tab-header-area > .headers-region > .tab:selected > .tab-container > .tab-label {
+TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > .tab-label {
     -fx-text-fill: -fg;
     -fx-font-weight: bold;
 }
@@ -202,9 +319,19 @@
 }
 .tool-bar .button { -fx-padding: 3 10 3 10; }
 
+/* 滚动条:无轨道,细圆角滑块,hover 加深 */
 .scroll-bar { -fx-background-color: transparent; }
-.scroll-bar .thumb { -fx-background-color: -border; -fx-background-radius: 4; }
+.scroll-bar .thumb {
+    -fx-background-color: -border-strong;
+    -fx-background-radius: 4;
+    -fx-background-insets: 2;
+}
+.scroll-bar .thumb:hover { -fx-background-color: -fg-dim; }
 .scroll-bar .increment-button, .scroll-bar .decrement-button { -fx-opacity: 0; -fx-pref-height: 0; }
+
+/* 进度指示器走品牌色 */
+.progress-indicator { -fx-progress-color: -accent-deep; }
+.root.dark .progress-indicator { -fx-progress-color: -accent; }
 
 .label.h1 { -fx-font-size: 22px; -fx-font-weight: bold; }
 .label.h2 { -fx-font-size: 15px; -fx-font-weight: bold; }
@@ -262,9 +389,7 @@
 /* 关键：文字色规则必须直接命中嵌套 Label。
    Modena 的 `.label { -fx-text-fill: -fx-text-background-color }` 是对 Label 的
    直接匹配，而写在父 HBox 上的 -fx-text-fill 只是"继承值"——JavaFX 里继承值
-   输给任何直接匹配规则，所以旧写法在 Label 上根本不生效，文字色仍由 Modena 的
-   ladder(-fx-background) 推导：选中+聚焦时 -fx-background = -fx-selection-bar
-   (#0096C9，亮度 26% < 45% 阈值) → 推导成白色，而实际行底色是浅色 → 白字看不见。 */
+   输给任何直接匹配规则。文字色统一走令牌。 */
 .diff-row {
     -fx-padding: 0;
     -fx-border-width: 0 0 0 2;
@@ -281,7 +406,12 @@
 
 /* 选中行：行底色必须显式给出。否则 .diff-* 的底色会盖掉 ListView 的选中底色，
    点了哪行完全看不出来（只有单元格 padding 漏出一条细缝）。 */
-.diff-list > .virtual-flow > .clipped-container > .sheet > .list-cell { -fx-padding: 0; }
+.diff-list > .virtual-flow > .clipped-container > .sheet > .list-cell {
+    -fx-padding: 0;
+    /* diff 行底纹必须满幅铺,还原列表新 UI 的留白圆角 */
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+}
 .list-cell:selected .diff-ctx  { -fx-background-color: -sel; }
 .list-cell:selected .diff-add  { -fx-background-color: -green-sel; }
 .list-cell:selected .diff-del  { -fx-background-color: -red-sel; }
