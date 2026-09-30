@@ -458,6 +458,12 @@ public class DiffView extends VBox {
             header.setFont(MONO_BOLD);
             header.setPadding(new Insets(3, 8, 3, 8));
             header.setMaxWidth(Double.MAX_VALUE);
+            // 文件头文本(路径全名)的宽度需求绝不能上传给 VirtualFlow:wrap=false 的 Label
+            // pref 宽 = 整行文本宽,经 VBox/ListCell 上传后,长路径会把 ListView 自带的
+            // 横向滚动条撑出来,和自绘的 #diff-hbar 叠成两条(横向内容行没事,CodeArea
+            // 的 min/pref 早已归零)。归零后单元格始终=视口宽,文本由省略号截断,全名走悬停提示。
+            header.setMinWidth(0);
+            header.setPrefWidth(0);
             box.getChildren().setAll(header);
             setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY);
         }
