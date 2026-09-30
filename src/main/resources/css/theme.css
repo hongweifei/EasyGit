@@ -405,6 +405,10 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
     -fx-pref-width: 0;
     -fx-padding: 0;
 }
+/* 横向滚动条加粗一档:默认滑块只有约 6px 高、又是浅灰落在浅底上,
+   用户反馈"看不到 / 只看到一条缝"。这里把条高提到 12px、滑块留 2px 边距(约 8px 厚) */
+.scroll-bar:horizontal { -fx-pref-height: 12; }
+.scroll-bar:horizontal .thumb { -fx-background-insets: 2 1 2 1; -fx-background-radius: 5; }
 
 /* 进度指示器走品牌色 */
 .progress-indicator { -fx-progress-color: -accent-deep; }

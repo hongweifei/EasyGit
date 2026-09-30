@@ -24,6 +24,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Font;
@@ -66,6 +67,11 @@ public class DiffView extends VBox {
 
     /** 底部横向滚动条:代码行比视口宽时用来左右看全(行号列不跟着动)。 */
     private final ScrollBar hbar = new ScrollBar();
+    /**
+     * 代码区容器:横向滚动条压在**同一张框**里(和竖向滚动条一致)。
+     * 之前把它摆在 ListView 下面,VBox 里就成了框外单独一条,和右侧竖条的位置不对称。
+     */
+    private final StackPane frame = new StackPane();
     /** 当前横向偏移(像素,>=0);单元格里的代码/文件名按它左移。 */
     private final DoubleProperty hOffset = new SimpleDoubleProperty();
     /** 可横向滚动量 = 最宽一行需要的宽度 - 视口宽;<=0 表示放得下,滚动条隐藏。 */
@@ -88,6 +94,8 @@ public class DiffView extends VBox {
         hbar.setOrientation(Orientation.HORIZONTAL);
         // ListView(VirtualFlow) 自带一个隐藏的横向滚动条,给自绘的这条一个 id 以便区分/测试
         hbar.setId("diff-hbar");
+        // 不参与 vgrow 的子节点会被 VBox 压到最小高度:钉住"最小=首选",窗口再矮也点得到
+        hbar.setMinHeight(Region.USE_PREF_SIZE);
         hbar.setMin(0);
         hbar.setVisible(false);
         hbar.setManaged(false);
@@ -95,10 +103,48 @@ public class DiffView extends VBox {
                 hOffset.set(Math.max(0, Math.min(nv.doubleValue(), hScrollMax))));
         // 视口宽度变化(拖分栏/改窗口)会让"放不放得下"跟着变
         list.widthProperty().addListener((o, ov, nv) -> updateHScroll());
-        getChildren().addAll(list, hbar);
-        VBox.setVgrow(list, Priority.ALWAYS);
+        // 滚轮:Shift+滚轮 / 横向滚轮横向滚。只有拖那条细滑块太反直觉,用户第一反应一定是滚轮
+        list.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, e -> {
+            if (!hbar.isVisible()) return;
+            boolean horizontal = Math.abs(e.getDeltaX()) > Math.abs(e.getDeltaY()) || e.isShiftDown();
+            if (!horizontal) return;
+            double d = Math.abs(e.getDeltaX()) > 0.5 ? e.getDeltaX() : e.getDeltaY();
+            scrollHBy(d * 3);
+            e.consume();
+        });
+        // 点滚动条空白处翻页:箭头按钮被样式收掉了(见 theme.css),不点滑块本来毫无反应
+        hbar.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+            Node thumb = hbar.lookup(".thumb");
+            if (thumb == null) return;
+            javafx.geometry.Bounds tb = thumb.localToScene(thumb.getBoundsInLocal());
+            if (tb.contains(e.getSceneX(), e.getSceneY())) return;   // 点在滑块上:交给默认拖拽
+            double page = Math.max(60, list.getWidth() * 0.8);
+            scrollHBy(e.getSceneX() < tb.getMinX() ? -page : page);
+            e.consume();
+        });
+        // 横向滚动条压在代码区同一张框里:StackPane 叠放,底对齐、横向拉满;
+        // 显示时给列表留出底部一条(内容不会被盖住,滚动条落在列表自己的底色/描边内)
+        frame.getChildren().addAll(list, hbar);
+        frame.setId("diff-frame");
+        StackPane.setAlignment(hbar, Pos.BOTTOM_LEFT);
+        // 列表必须填满容器:否则它的实际宽度会被自身 max 影响,比容器窄几像素,
+        // 叠在上面的横向滚动条就对不齐左缘(实测差 2.4px/边)
+        list.setMaxWidth(Double.MAX_VALUE);
+        list.setMaxHeight(Double.MAX_VALUE);
+        // 横条与列表同宽同左缘:min 放开(ScrollBar 的 min 默认等于 pref,会把整张框撑宽),
+        // max 放到无限由 StackPane 拉到列表宽度
+        hbar.setMinWidth(0);
+        hbar.setMaxWidth(Double.MAX_VALUE);
+        getChildren().add(frame);
+        VBox.setVgrow(frame, Priority.ALWAYS);
         // 布局切换后立即重建(纯文件模式在 rebuild 内部仍按统一视图处理)
         sideBySide.addListener((o, ov, nv) -> rebuild());
+    }
+
+    /** 横向滚动条实际占用的高度(CSS 里 12px;皮肤还没建好时退回 12)。 */
+    private double hbarHeight() {
+        double h = hbar.prefHeight(-1);
+        return h > 1 ? h : 12;
     }
 
     public void clear() {
@@ -215,6 +261,8 @@ public class DiffView extends VBox {
         boolean show = hScrollMax > 0.5;
         hbar.setVisible(show);
         hbar.setManaged(show);
+        // 占位:滚动条叠在列表底部一条,不占位就会盖住最后一行
+        list.setPadding(show ? new Insets(0, 0, hbarHeight(), 0) : Insets.EMPTY);
         // ScrollBar 惯例:max=内容总宽、visibleAmount=视口宽(拇指比例才对),value 上限 = max - visibleAmount
         hbar.setMax(need);
         hbar.setVisibleAmount(viewport);
@@ -231,6 +279,11 @@ public class DiffView extends VBox {
         hbar.setValue(0);
         hOffset.set(0);
         updateHScroll();
+    }
+
+    /** 按像素横向滚动(夹在可滚动范围内);滚轮与点轨道都用它。 */
+    private void scrollHBy(double delta) {
+        hbar.setValue(Math.max(0, Math.min(hbar.getValue() + delta, Math.max(0, hScrollMax))));
     }
 
     /**
