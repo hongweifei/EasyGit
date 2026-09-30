@@ -12,6 +12,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
@@ -157,14 +158,19 @@ public class ChangesPanel extends VBox {
     }
 
     private void configList(ListView<FileChange> list, Area area) {
+        // 稳定锚点:两个清单会被批量操作清空,按"是否非空"认列表不可靠(探针/样式都按 id 找)
+        list.setId(area == Area.UNSTAGED ? "changes-work" : "changes-staged");
         list.setCellFactory(v -> new FileCell());
         list.setPlaceholder(new Label(""));
+        // 多选:配合右键的批量「加入/移出/丢弃」;Ctrl+A 全选是 ListView 自带的
+        list.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         list.getSelectionModel().selectedItemProperty().addListener((o, ov, nv) -> {
             if (updatingSelection || nv == null) return;
+            // 只清**另一个**清单的选中;本清单的多选不能动 ——
+            // 原来这里会先 clear 再 select(nv) 把自己重置成单选,批量操作就只剩一行了(实测踩过)
             updatingSelection = true;
-            workList.getSelectionModel().clearSelection();
-            stagedList.getSelectionModel().clearSelection();
-            list.getSelectionModel().select(nv);
+            ListView<FileChange> other = list == workList ? stagedList : workList;
+            other.getSelectionModel().clearSelection();
             updatingSelection = false;
             selected = nv;
             selectedArea = area;
@@ -265,22 +271,72 @@ public class ChangesPanel extends VBox {
 
     // ---------- 加入 / 移出待提交 ----------
 
+    /** 批量操作的目标:点了已选中的行就作用于整个选区,否则只作用于这一行。 */
+    private static List<FileChange> targetsOf(ListView<FileChange> list, FileChange f) {
+        var sel = list == null ? null : list.getSelectionModel().getSelectedItems();
+        return sel != null && sel.contains(f) ? List.copyOf(sel) : List.of(f);
+    }
+
+    /** 菜单文案:单选带路径级的简洁名,多选带数量。 */
+    private static String batchLabel(String action, List<FileChange> targets) {
+        return targets.size() > 1 ? action + "(所选 " + targets.size() + " 个)" : action;
+    }
+
+    /**
+     * 批量菜单项:文字与目标都在**菜单弹出/点击那一刻**按当前选区解析,
+     * 不能在单元格刷新时捕获 —— 选区是之后才多选出来的,捕获旧值就会只操作一行(实测踩过)。
+     */
+    private MenuItem batchItem(ListView<FileChange> list, FileChange f, String action,
+                               java.util.function.Consumer<List<FileChange>> run) {
+        MenuItem mi = new MenuItem(action);
+        mi.setOnAction(e -> run.accept(targetsOf(list, f)));
+        mi.setOnMenuValidation(ev -> mi.setText(batchLabel(action, targetsOf(list, f))));
+        return mi;
+    }
+
+    private static String describe(List<FileChange> targets) {
+        return targets.size() == 1 ? targets.get(0).path : targets.size() + " 个文件";
+    }
+
     private void addToCommit(FileChange f) {
-        toCommit.add(f.path);
-        if (lastStatus != null) refresh(lastStatus); // 纯 UI 重新分桶,零 git 调用
-        UiLog.line("加入待提交: " + f.path);
-        Fx.status("已加入待提交: " + f.path);
+        addToCommit(List.of(f));
+    }
+
+    /** 把所选未暂存文件标记进待提交(纯 UI 标记,git add 在提交时统一做);冲突文件跳过,要先解决。 */
+    private void addToCommit(List<FileChange> targets) {
+        int conflicts = 0;
+        for (FileChange f : targets) {
+            if (f.unmerged) { conflicts++; continue; }
+            toCommit.add(f.path);
+        }
+        int added = targets.size() - conflicts;
+        if (added > 0 && lastStatus != null) refresh(lastStatus); // 纯 UI 重新分桶,零 git 调用
+        if (added > 0) {
+            UiLog.line("加入待提交: " + describe(targets));
+            Fx.status("已加入待提交: " + describe(targets)
+                    + (conflicts > 0 ? "(跳过 " + conflicts + " 个冲突文件,请先解决)" : ""));
+        } else {
+            Fx.status("所选文件都有未解决冲突,请先双击解决");
+        }
     }
 
     private void removeFromCommit(FileChange f) {
-        toCommit.remove(f.path);
-        if (f.indexState != ' ' && f.indexState != '?') {
-            // 外部/之前真实暂存过的,需要真正 unstage
-            act(() -> new JGitService(repo()).unstage(List.of(f.path)), "已移出待提交: " + f.path);
-        } else {
+        removeFromCommit(List.of(f));
+    }
+
+    /** 移出所选待提交文件:仅标记的直接撤销;真实已暂存的合并成一次 git unstage。 */
+    private void removeFromCommit(List<FileChange> targets) {
+        List<String> realStaged = targets.stream()
+                .filter(f -> f.indexState != ' ' && f.indexState != '?')
+                .map(f -> f.path).toList();
+        for (FileChange f : targets) toCommit.remove(f.path);
+        String what = describe(targets);
+        if (realStaged.isEmpty()) {
             if (lastStatus != null) refresh(lastStatus);
-            UiLog.line("移出待提交: " + f.path);
-            Fx.status("已移出待提交: " + f.path);
+            UiLog.line("移出待提交: " + what);
+            Fx.status("已移出待提交: " + what);
+        } else {
+            act(() -> new JGitService(repo()).unstage(realStaged), "已移出待提交: " + what);
         }
     }
 
@@ -421,8 +477,29 @@ public class ChangesPanel extends VBox {
     // ---------- 动作 ----------
 
     private void discard(FileChange f) {
-        if (!Fx.confirm("丢弃改动", "确定丢弃 " + f.path + " 的工作区改动?此操作不可撤销。")) return;
-        act(() -> new JGitService(repo()).discard(List.of(f.path), null), "已丢弃 " + f.path);
+        discard(List.of(f));
+    }
+
+    /** 丢弃所选文件的工作区改动:一次确认、一批执行;未跟踪的走删除,冲突文件跳过。 */
+    private void discard(List<FileChange> targets) {
+        List<FileChange> real = targets.stream().filter(f -> !f.unmerged).toList();
+        int skipped = targets.size() - real.size();
+        if (real.isEmpty()) {
+            Fx.status("所选都是冲突文件,请先解决冲突");
+            return;
+        }
+        String listing = real.stream().limit(8).map(f -> f.path)
+                .reduce((a, b) -> a + "\n" + b).orElse("") + (real.size() > 8 ? "\n…" : "");
+        String ask = real.size() == 1
+                ? "确定丢弃 " + real.get(0).path + " 的工作区改动?此操作不可撤销。"
+                : "确定丢弃所选 " + real.size() + " 个文件的工作区改动?此操作不可撤销。\n\n" + listing;
+        if (!Fx.confirm("丢弃改动", ask)) return;
+        List<String> tracked = real.stream().filter(f -> !f.untracked).map(f -> f.path).toList();
+        List<String> untracked = real.stream().filter(f -> f.untracked).map(f -> f.path).toList();
+        act(() -> {
+            if (!tracked.isEmpty()) new JGitService(repo()).discard(tracked, null);
+            if (!untracked.isEmpty()) new JGitService(repo()).discard(null, untracked);
+        }, "已丢弃 " + real.size() + " 个文件的改动" + (skipped > 0 ? "(跳过 " + skipped + " 个冲突文件)" : ""));
     }
 
     private void deleteUntracked(FileChange f) {
@@ -522,11 +599,11 @@ public class ChangesPanel extends VBox {
                     }
                 }));
             } else if (fromStaged) {
-                menu.getItems().add(item("移出待提交", e -> removeFromCommit(f)));
+                menu.getItems().add(batchItem(getListView(), f, "移出待提交", ts -> removeFromCommit(ts)));
                 menu.getItems().add(item("Blame 此文件", e -> blameOpener.accept(f.path)));
             } else {
-                menu.getItems().add(item("加入待提交", e -> addToCommit(f)));
-                menu.getItems().add(item("丢弃工作区改动", e -> discard(f)));
+                menu.getItems().add(batchItem(getListView(), f, "加入待提交", ts -> addToCommit(ts)));
+                menu.getItems().add(batchItem(getListView(), f, "丢弃工作区改动", ts -> discard(ts)));
                 menu.getItems().add(item("Blame 此文件", e -> blameOpener.accept(f.path)));
             }
             if (f.untracked) {
