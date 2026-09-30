@@ -5,21 +5,29 @@ import org.easygit.core.model.DiffModels.DiffHunk;
 import org.easygit.core.model.DiffModels.DiffLine;
 import org.easygit.core.model.DiffModels.LineType;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleDoubleProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Font;
+import javafx.scene.text.Text;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -53,8 +61,18 @@ public class DiffView extends VBox {
     /** 文件视图模式:只显示一列行号(差异视图为两列)。 */
     private final javafx.beans.property.BooleanProperty plainFile =
             new javafx.beans.property.SimpleBooleanProperty(false);
-    /** 并排对照模式。纯文件模式下没有对比意义,始终按统一视图渲染。 */
+    /** 并排视图。纯文件模式下没有对比意义,始终按统一视图渲染。 */
     private final BooleanProperty sideBySide = new SimpleBooleanProperty(false);
+
+    /** 底部横向滚动条:代码行比视口宽时用来左右看全(行号列不跟着动)。 */
+    private final ScrollBar hbar = new ScrollBar();
+    /** 当前横向偏移(像素,>=0);单元格里的代码/文件名按它左移。 */
+    private final DoubleProperty hOffset = new SimpleDoubleProperty();
+    /** 可横向滚动量 = 最宽一行需要的宽度 - 视口宽;<=0 表示放得下,滚动条隐藏。 */
+    private double hScrollMax;
+    /** 文本宽度测量用的临时节点(等宽字体,tab 也按实际渲染宽度算)。 */
+    private static final Text METER = new Text();
+    private static final double H_PAD = 20;
 
     // 当前数据源:切换布局时据此重建,不必由调用方重新取数
     private List<DiffFile> currentFiles = List.of();
@@ -67,7 +85,17 @@ public class DiffView extends VBox {
         list.setFixedCellSize(21);
         list.setCellFactory(v -> new Cell());
         list.setItems(rows);
-        getChildren().add(list);
+        hbar.setOrientation(Orientation.HORIZONTAL);
+        // ListView(VirtualFlow) 自带一个隐藏的横向滚动条,给自绘的这条一个 id 以便区分/测试
+        hbar.setId("diff-hbar");
+        hbar.setMin(0);
+        hbar.setVisible(false);
+        hbar.setManaged(false);
+        hbar.valueProperty().addListener((o, ov, nv) ->
+                hOffset.set(Math.max(0, Math.min(nv.doubleValue(), hScrollMax))));
+        // 视口宽度变化(拖分栏/改窗口)会让"放不放得下"跟着变
+        list.widthProperty().addListener((o, ov, nv) -> updateHScroll());
+        getChildren().addAll(list, hbar);
         VBox.setVgrow(list, Priority.ALWAYS);
         // 布局切换后立即重建(纯文件模式在 rebuild 内部仍按统一视图处理)
         sideBySide.addListener((o, ov, nv) -> rebuild());
@@ -78,6 +106,7 @@ public class DiffView extends VBox {
         plainTitle = null;
         plainLines = List.of();
         rows.clear();
+        resetHScroll();
     }
 
     /** 展示一组文件的完整 diff。 */
@@ -86,6 +115,7 @@ public class DiffView extends VBox {
         plainLines = List.of();
         currentFiles = files == null ? List.of() : files;
         rebuild();
+        resetHScroll();   // 换了文件从最左边开始看
     }
 
     /** 展示纯文件内容(单列行号),用于提交的"文件视图"。 */
@@ -94,6 +124,7 @@ public class DiffView extends VBox {
         plainLines = lines == null ? List.of() : lines;
         currentFiles = List.of();
         rebuild();
+        resetHScroll();
     }
 
     /** 展示单个文件。 */
@@ -159,6 +190,91 @@ public class DiffView extends VBox {
             buildUnified(rs);
         }
         rows.setAll(rs);
+        updateHScroll();
+    }
+
+    // ---------- 横向滚动 ----------
+
+    /**
+     * 重算横向可滚动量并刷新滚动条。
+     *
+     * 代码行常常比视口宽,原来只能被省略号/视口裁掉。这里按最宽一行算出需要多少像素,
+     * 多出来的部分交给底部滚动条;单元格里的代码块按 {@link #hOffset} 左移(行号列不动,
+     * 与编辑器一致),文件头行不参与(它有省略号 + 悬停提示)。
+     */
+    private void updateHScroll() {
+        double viewport = list.getWidth() > 0 ? list.getWidth() : getWidth();
+        if (viewport <= 0) {
+            hScrollMax = 0;
+            hbar.setVisible(false);
+            hbar.setManaged(false);
+            return;
+        }
+        double need = Math.max(viewport, neededWidth(viewport));
+        hScrollMax = need - viewport;
+        boolean show = hScrollMax > 0.5;
+        hbar.setVisible(show);
+        hbar.setManaged(show);
+        // ScrollBar 惯例:max=内容总宽、visibleAmount=视口宽(拇指比例才对),value 上限 = max - visibleAmount
+        hbar.setMax(need);
+        hbar.setVisibleAmount(viewport);
+        if (!show) {
+            hbar.setValue(0);
+        } else if (hbar.getValue() > hScrollMax) {
+            hbar.setValue(hScrollMax);
+        }
+        hOffset.set(Math.max(0, Math.min(hbar.getValue(), hScrollMax)));
+    }
+
+    /** 换文件/清空时回到最左边。 */
+    private void resetHScroll() {
+        hbar.setValue(0);
+        hOffset.set(0);
+        updateHScroll();
+    }
+
+    /**
+     * 布局后再算一次横向范围:重建时列表可能还没有宽度(首屏/切页签),
+     * 只靠宽度监听会漏掉"宽度已定但内容后到"的顺序。
+     */
+    @Override protected void layoutChildren() {
+        super.layoutChildren();
+        updateHScroll();
+    }
+
+    /** 当前行集合里最宽一行需要的像素宽(并排视图按"每栏一半视口"折算)。 */
+    private double neededWidth(double viewport) {
+        boolean pair = sideBySide.get() && plainTitle == null;
+        String widest = "";
+        for (Row r : rows) {
+            if (r.kind() == RowKind.FILE_HEADER) continue;
+            if (r.kind() == RowKind.PAIR) {
+                widest = longer(widest, r.left());
+                widest = longer(widest, r.right());
+            } else {
+                widest = longer(widest, r.left());
+            }
+        }
+        double codeW = textWidth(widest);
+        if (pair) {
+            // 两栏共用同一个偏移:按较宽一栏能看全来算总量
+            double perColumn = NO_W + codeW + H_PAD;
+            return Math.max(viewport, viewport / 2 + perColumn);
+        }
+        double numW = plainFile.get() ? NO_W : NO_W * 2;
+        return numW + codeW + H_PAD;
+    }
+
+    /** 只按长度粗筛候选(等宽字体下够用),最终宽度只测一次。 */
+    private static String longer(String best, DiffLine l) {
+        String s = l == null ? "" : l.text();
+        return s.length() > best.length() ? s : best;
+    }
+
+    private static double textWidth(String s) {
+        METER.setFont(MONO);
+        METER.setText(s == null ? "" : s);
+        return METER.getLayoutBounds().getWidth();
     }
 
     private void buildUnified(List<Row> rs) {
@@ -247,7 +363,9 @@ public class DiffView extends VBox {
         private final Label oldNo = new Label();
         private final Label newNo = new Label();
         private final Label code = new Label();
-        private final HBox lineBox = new HBox(oldNo, newNo, code);
+        /** 代码块包在带裁剪的容器里:横向滚动时内容左移,不会画到行号列上,也不会溢出到隔壁栏。 */
+        private final CodeArea codePane = codeArea(code);
+        private final HBox lineBox = new HBox(oldNo, newNo, codePane);
         // 并排视图的一行(左右两栏各占一半)
         private final Label lNo = new Label();
         private final Label lCode = new Label();
@@ -277,8 +395,6 @@ public class DiffView extends VBox {
             // 不设的话 HBox 只按内容宽度收缩,增删底纹只铺到文本长度为止,
             // 右侧会露出单元格自己的底色(短行时很明显)
             lineBox.setMaxWidth(Double.MAX_VALUE);
-            HBox.setHgrow(code, Priority.ALWAYS);
-            code.setMaxWidth(Double.MAX_VALUE);
 
             pairBox.getStyleClass().add("diff-row");
             pairBox.setSpacing(0);
@@ -294,6 +410,49 @@ public class DiffView extends VBox {
         }
 
         /**
+         * 代码区的裁剪容器。
+         *
+         * 代码 Label 必须按**文本自身宽度**铺开(否则文本会被自己的宽度裁掉,横向滚动也看不到后半段),
+         * 但它的宽度绝不能向上传递给 HBox/ListView —— 一旦参与宽度协商,整个 diff 列会被撑宽
+         * (实测:ListView 被撑到 1466px)。所以这里自己算宽度:min/pref 恒为 0(不参与协商,
+         * 靠 Hgrow 拿剩余空间),内部显式把 Label resize 成文本宽度,再用 clip 裁掉超出部分。
+         */
+        private class CodeArea extends Pane {
+            private final Label content;
+
+            CodeArea(Label content) {
+                this.content = content;
+                getChildren().add(content);
+                setMinWidth(0);
+                setPrefWidth(0);
+                setMaxWidth(Double.MAX_VALUE);
+                content.setWrapText(false);
+                content.setMinWidth(0);
+                content.setMaxWidth(Double.MAX_VALUE);
+                content.translateXProperty().bind(hOffset.negate());
+                Rectangle clip = new Rectangle();
+                clip.widthProperty().bind(widthProperty());
+                clip.heightProperty().bind(heightProperty());
+                setClip(clip);
+                HBox.setHgrow(this, Priority.ALWAYS);
+            }
+
+            @Override protected double computeMinWidth(double h) { return 0; }
+            @Override protected double computePrefWidth(double h) { return 0; }
+
+            @Override protected void layoutChildren() {
+                double w = content.prefWidth(-1);                 // 文本宽度:保持不压缩
+                double h = Math.min(getHeight(), content.prefHeight(w));
+                content.resize(w, h);
+                content.relocate(0, Math.max(0, (getHeight() - h) / 2)); // 纵向居中(原来是 HBox 干的)
+            }
+        }
+
+        private CodeArea codeArea(Label content) {
+            return new CodeArea(content);
+        }
+
+        /**
          * 并排视图的一个半栏。
          * prefWidth 归零 + Hgrow ALWAYS:两栏各分到一半宽度,与内容长短无关;
          * 不这样写的话 HBox 会按内容分配,左右栏宽度随文本变化而无法对齐。
@@ -306,9 +465,7 @@ public class DiffView extends VBox {
             code.getStyleClass().add("mono");
             code.setFont(MONO);
             code.setWrapText(false);
-            code.setMaxWidth(Double.MAX_VALUE);
-            HBox.setHgrow(code, Priority.ALWAYS);
-            HBox h = new HBox(no, code);
+            HBox h = new HBox(no, codeArea(code));
             h.getStyleClass().addAll("diff-half", right ? "diff-right" : "diff-left");
             h.setSpacing(0);
             h.setAlignment(Pos.CENTER_LEFT);
