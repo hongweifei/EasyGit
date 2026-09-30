@@ -82,12 +82,20 @@ public final class Fx {
 
     /**
      * 列表项提示:文件名/路径在窄栏里会被省略号截断,悬停时用 Tooltip 显示全名。
-     * 延迟统一在这里设 —— JavaFX 默认 1 秒才弹,查名字时太迟钝。
+     *
+     * 三个时长都显式设死,默认值在"查名字"这个场景下都不合用:
+     * <ul>
+     *   <li>showDelay 默认 1 秒才弹,太迟钝 -> 400ms;</li>
+     *   <li>showDuration 默认 5 秒后不论鼠标在不在都自动消失(实测:悬停不动,提示也只活约 5 秒),
+     *       读长路径时会被截断 -> 30 秒;</li>
+     *   <li>hideDelay 鼠标离开后 200ms 才收 -> 100ms。</li>
+     * </ul>
      * 注意单元格是复用的:非对应行(以及空行)要 {@code setTooltip(null)},否则会挂着上一行的提示。
      */
     public static Tooltip tip(String fullText) {
         Tooltip t = new Tooltip(fullText);
         t.setShowDelay(Duration.millis(400));
+        t.setShowDuration(Duration.seconds(30));
         t.setHideDelay(Duration.millis(100));
         return t;
     }

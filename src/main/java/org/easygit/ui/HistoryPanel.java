@@ -289,7 +289,7 @@ public class HistoryPanel extends VBox {
             Label subject = new Label(c.subject);
             subject.getStyleClass().add("commit-subject");
             subject.setMaxWidth(Double.MAX_VALUE);
-            subject.setTooltip(new Tooltip(c.subject + "\n" + c.author + "  " + c.timeText() + "  " + c.abbr));
+            subject.setTooltip(Fx.tip(c.subject + "\n" + c.author + "  " + c.timeText() + "  " + c.abbr));
 
             HBox meta = new HBox(8);
             meta.getChildren().add(new Label(c.author));

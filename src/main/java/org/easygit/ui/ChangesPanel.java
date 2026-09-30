@@ -205,8 +205,10 @@ public class ChangesPanel extends VBox {
                         && !commitMap.containsKey(f.path))
                 .toList();
 
-        workList.getItems().setAll(work);
-        stagedList.getItems().setAll(commitList);
+        // 内容没变就不重建清单:5 秒轮询每次都 setAll 会把单元格连同悬停中的提示一起换掉
+        // (实测:悬停文件项约 2 秒后提示自己消失),也会丢选中、白白刷新整列。
+        if (!sameItems(workList.getItems(), work)) workList.getItems().setAll(work);
+        if (!sameItems(stagedList.getItems(), commitList)) stagedList.getItems().setAll(commitList);
         long conflicts = st.changes().stream().filter(f -> f.unmerged).count();
         workTitle.setText("未暂存(含未跟踪) (" + work.size() + ")"
                 + (conflicts > 0 ? "   ⚠ 冲突 " + conflicts : ""));
@@ -222,6 +224,21 @@ public class ChangesPanel extends VBox {
                 diffView.clear();
             }
         }
+    }
+
+    /**
+     * 两个清单内容是否等价(逐项比路径与状态)。状态解析每次都产生新对象,不能比引用。
+     */
+    private static boolean sameItems(List<FileChange> shown, List<FileChange> next) {
+        if (shown.size() != next.size()) return false;
+        for (int i = 0; i < shown.size(); i++) {
+            FileChange a = shown.get(i), b = next.get(i);
+            if (!a.path.equals(b.path) || a.untracked != b.untracked || a.unmerged != b.unmerged
+                    || a.indexState != b.indexState || a.wtState != b.wtState) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
