@@ -150,7 +150,15 @@ public final class Fx {
                 T result = work.get();
                 Platform.runLater(() -> {
                     task.releaseBusy(); // 先熄灯再渲染结果,和原来的视觉顺序一致
-                    if (valid.getAsBoolean()) onDone.accept(result);
+                    if (!valid.getAsBoolean()) return;
+                    // 界面更新本身出错不能让异常冒到 FX 线程:那会走全局未捕获处理器弹模态框,
+                    // 一旦刷新是周期性的,就会变成"框关了又弹、窗口点不动"的假死。这里落日志、
+                    // 状态栏给一行提示,界面继续可用(输出面板会自动展开)。
+                    try {
+                        onDone.accept(result);
+                    } catch (Throwable ex) {
+                        reportUiFailure("界面更新失败", ex);
+                    }
                 });
             } catch (Throwable ex) {
                 Platform.runLater(() -> {
@@ -168,6 +176,14 @@ public final class Fx {
             }
         });
         pruneInFlight();
+    }
+
+    /** 界面更新失败:记一行日志(输出面板会自动展开)+ 状态栏提示,不弹模态框。 */
+    private static void reportUiFailure(String what, Throwable ex) {
+        String msg = ex.getMessage() == null ? ex.toString() : ex.getMessage();
+        ex.printStackTrace();                      // 控制台启动时能拿到完整堆栈
+        UiLog.line("✖ " + what + ": " + msg);
+        status(what + ": " + msg);
     }
 
     /**
@@ -252,6 +268,28 @@ public final class Fx {
     }
 
     public static void error(String title, String message, String detail) {
+        Alert a = errorAlert(title, message, detail);
+        a.showAndWait();
+    }
+
+    /**
+     * 非模态错误提示,用于"从任何地方冒出来的意外异常"。
+     * 模态框会把主窗口整个锁住(用户看到的就是"程序卡死、点不动"),而且周期性刷新里反复出错时
+     * 会变成"框关了又弹"。所以这里 show() 不阻塞,界面还能继续操作。
+     */
+    public static void errorAsync(String title, String message, String detail) {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(() -> errorAsync(title, message, detail));
+            return;
+        }
+        Alert a = errorAlert(title, message, detail);
+        // Dialog 默认就是 APPLICATION_MODAL,即使 show() 不阻塞调用方,主窗口也会被锁住输入。
+        // 这里显式关掉模态,才能保证"提示归提示,界面照常用"。
+        a.initModality(javafx.stage.Modality.NONE);
+        a.show();
+    }
+
+    private static Alert errorAlert(String title, String message, String detail) {
         Alert a = new Alert(Alert.AlertType.ERROR);
         icon(a);
         a.setTitle(title);
@@ -270,7 +308,7 @@ public final class Fx {
             GridPane.setHgrow(ta, Priority.ALWAYS);
             a.getDialogPane().setContent(g);
         }
-        a.showAndWait();
+        return a;
     }
 
     public static void info(String title, String message) {

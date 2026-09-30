@@ -172,7 +172,7 @@ public class MainWindow {
         // 右侧高频组:拉取 / 推送 / 刷新(真实文字钮,不用神秘图标)
         Button pullBtn = new Button("拉取");
         pullBtn.getStyleClass().add("ghost");
-        pullBtn.setOnAction(e -> network("拉取中…", () -> NativeGit.pull(RepoManager.get().current())));
+        pullBtn.setOnAction(e -> network("拉取", true, () -> NativeGit.pull(RepoManager.get().current())));
         Button pushBtn = new Button("推送");
         pushBtn.getStyleClass().add("ghost");
         pushBtn.setOnAction(e -> Dialogs.pushDialog(null, this::refreshAll));
@@ -191,7 +191,7 @@ public class MainWindow {
                 Fx.info("抓取", "当前仓库没有配置远程。\n\n可在「推送」对话框里点「管理…」添加远程,添加后会自动抓取。");
                 return;
             }
-            network("抓取中…", () -> NativeGit.fetch(repo));
+            network("抓取", false, () -> NativeGit.fetch(repo));
         });
         MenuItem blame = new MenuItem("Blame 文件(输入路径)…");
         blame.setOnAction(e -> {
@@ -364,20 +364,49 @@ public class MainWindow {
     private List<BranchInfo> snapshotBranches = List.of();
     private String lastHeadSha;
 
-    private void network(String busyLabel, java.util.function.Supplier<GitProcess.GitResult> work) {
+    /**
+     * 网络操作(拉取 / 抓取)。
+     *
+     * 传进来的 name 是"操作名"(如「拉取」),忙碌/日志/结果提示都由它拼:
+     * 之前是拿忙碌文案「拉取中…」反过来拼错误标题,于是失败时弹的是「拉取中…失败」这种怪话。
+     *
+     * @param reportIncoming 成功后是否报"新增了几个提交"(拉取才有意义;抓取不改 HEAD)
+     */
+    private void network(String name, boolean reportIncoming,
+                         java.util.function.Supplier<GitProcess.GitResult> work) {
         Path repo = RepoManager.get().current();
         if (repo == null) return;
-        Fx.bg(busyLabel, work, r -> {
-            UiLog.op(busyLabel + " (git " + busyLabel.replace("中…", "") + ")"
-                    + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
+        Fx.bg(name + "中…", () -> {
+            // HEAD 在后台取(不能用界面里的 lastHeadSha 快照:首屏刷新可能还没轮到它,
+            // 那样新增提交数永远是 0,提示就成了错的"已是最新")
+            String headBefore = reportIncoming ? NativeGit.headSha(repo) : "";
+            GitProcess.GitResult r = work.get();
+            int incoming = 0;
+            if (reportIncoming && r.ok() && headBefore != null && !headBefore.isBlank()) {
+                incoming = NativeGit.countRange(repo, headBefore + "..HEAD");   // 失败返回 -1
+            }
+            return new NetResult(r, incoming);
+        }, res -> {
+            GitProcess.GitResult r = res.result();
+            UiLog.op("git " + name + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
             if (r.ok()) {
-                Fx.status(busyLabel.replace("中…", "") + "完成");
+                if (!reportIncoming) {
+                    Fx.status(name + "完成");
+                } else if (res.incoming() > 0) {
+                    Fx.status(name + "完成:新增 " + res.incoming() + " 个提交");
+                } else if (res.incoming() == 0) {
+                    Fx.status(name + "完成:已是最新");
+                } else {
+                    Fx.status(name + "完成");   // 提交数没算出来,别乱报"已是最新"
+                }
                 refreshAll();
             } else {
-                Fx.error(busyLabel + "失败", r.message(), null);
+                Fx.error(name + "失败", r.message(), null);
             }
         });
     }
+
+    private record NetResult(GitProcess.GitResult result, int incoming) {}
 
     // ---------- 欢迎页 ----------
 
@@ -470,6 +499,9 @@ public class MainWindow {
 
     /** 已排队的整仓刷新所属仓库代号,-1 表示没有在途的整仓刷新。 */
     private long refreshingEpoch = -1;
+    /** 本轮整仓刷新的开始时刻:回调万一被丢弃,也不能让"在途"永远成立(轮询会被永久跳过)。 */
+    private long refreshingSince;
+
     /** 切换通知是否已排队(连续切换时把多次通知合并成一次刷新)。 */
     private boolean refreshQueued;
 
@@ -505,6 +537,7 @@ public class MainWindow {
             return;
         }
         refreshingEpoch = RepoManager.get().epoch(); // 本轮整仓刷新的代号(轮询期间不再叠加)
+        refreshingSince = System.currentTimeMillis();
         root.setLeft(leftBox);
         if (root.getCenter() != centerCard) root.setCenter(centerCard);
 
@@ -597,8 +630,10 @@ public class MainWindow {
     }
 
     private void lightRefresh() {
-        // 整仓刷新(切换仓库/手动刷新)还在途时跳过这一拍,别让轮询去和首屏取数抢线程
-        if (RepoManager.get().epoch() == refreshingEpoch) return;
+        // 整仓刷新(切换仓库/手动刷新)还在途时跳过这一拍,别让轮询去和首屏取数抢线程;
+        // 但"在途"最多认 10 秒——否则一个被丢弃的回调会让轮询永久停摆(界面看着就像卡住了)
+        if (RepoManager.get().epoch() == refreshingEpoch
+                && System.currentTimeMillis() - refreshingSince < 10_000) return;
         RepoGuard guard = RepoGuard.capture();
         Path repo = guard.repo();
         if (repo == null) return;

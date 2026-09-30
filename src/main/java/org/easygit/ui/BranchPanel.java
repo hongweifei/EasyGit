@@ -209,6 +209,11 @@ public class BranchPanel extends VBox {
                 return "已更新当前分支 " + b.name + " ← " + b.upstream;
             }
             int i = b.upstream.indexOf('/');
+            // 上游不一定带远程前缀(比如把本地分支设成上游),直接 substring 会 StringIndexOutOfBounds
+            if (i <= 0 || i == b.upstream.length() - 1) {
+                throw new IllegalStateException("上游 " + b.upstream
+                        + " 不是「远程/分支」形式,无法自动快进。请检出该分支后用「拉取」。");
+            }
             String remote = b.upstream.substring(0, i);
             String remoteBranch = b.upstream.substring(i + 1);
             var r = org.easygit.core.NativeGit.fetchBranch(repo, remote, remoteBranch, b.name);
