@@ -283,8 +283,15 @@ public class HistoryPanel extends VBox {
                 setContextMenu(null);
                 return;
             }
-            Canvas canvas = new Canvas(graphW, ROW_H);
-            drawGraph(canvas.getGraphicsContext2D(), c);
+            // 文件历史模式下不画泳道图:筛选后的提交链父不连续(父提交多半不在列表里),
+            // 分道算法只能给每条提交新开泳道,不同提交的线段会被叠进同一列,
+            // 看上去就是"泳道断开"。此时图没有语义,只留提交列表本身。
+            boolean showGraph = pathFilter == null || pathFilter.isBlank();
+            Canvas canvas = null;
+            if (showGraph) {
+                canvas = new Canvas(graphW, ROW_H);
+                drawGraph(canvas.getGraphicsContext2D(), c);
+            }
 
             Label subject = new Label(c.subject);
             subject.getStyleClass().add("commit-subject");
@@ -316,7 +323,8 @@ public class HistoryPanel extends VBox {
             textBox.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(textBox, Priority.ALWAYS);
 
-            HBox box = new HBox(canvas, textBox);
+            HBox box = showGraph ? new HBox(canvas, textBox) : new HBox(textBox);
+            box.getStyleClass().add("graph-container"); // 保留:选中行左侧 accent 竖条靠它
             box.getStyleClass().add("graph-container");
             box.setAlignment(Pos.CENTER_LEFT);
             setGraphic(box);

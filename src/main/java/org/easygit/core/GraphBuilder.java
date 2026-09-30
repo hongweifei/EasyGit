@@ -28,8 +28,8 @@ public final class GraphBuilder {
             }
             int nodeLane;
             if (incoming.isEmpty()) {
-                nodeLane = tips.size();
-                tips.add(c.id);
+                nodeLane = claimFree(tips);
+                tips.set(nodeLane, c.id);
                 c.hasIncoming = false;
             } else {
                 nodeLane = incoming.get(0);
@@ -65,14 +65,30 @@ public final class GraphBuilder {
                         if (p.equals(tips.get(i))) { k = i; break; }
                     }
                     if (k < 0) {
-                        k = tips.size();
-                        tips.add(p);
+                        k = claimFree(tips);
+                        tips.set(k, p);
                     }
                     edges.add(new int[]{nodeLane, k});
                 }
             }
             c.edges = edges;
         }
+    }
+
+    /**
+     * 取一条空泳道:优先复用被弯入释放的槽位(学 gitk),没有空闲才追加。
+     * 此前只追加不复用,每次合并弯入都永久泄漏一条泳道——泳道号随合并数线性右漂,
+     * 超过图列宽度上限(260px≈21 条)后整条泳道连同节点被 Canvas 裁掉,
+     * 看上去就是"泳道画得断开/线条凭空消失"。
+     * 复用是安全的:空槽上方没有任何线(贯穿边跳过 null),新占用的提交
+     * hasIncoming=false 不会画顶线,不会与上方产生假的连接。
+     */
+    private static int claimFree(List<String> tips) {
+        for (int i = 0; i < tips.size(); i++) {
+            if (tips.get(i) == null) return i;
+        }
+        tips.add(null);
+        return tips.size() - 1;
     }
 
     /** 泳道 x 坐标(渲染用)。 */
