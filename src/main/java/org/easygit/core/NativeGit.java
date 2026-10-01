@@ -340,6 +340,45 @@ public final class NativeGit {
         return s == null ? "" : s.toLowerCase(java.util.Locale.ROOT);
     }
 
+    // ---------- 拉取流程的数据类型与编排(与界面无关,可无头测试) ----------
+
+    /** 拉取那一步的结果(含冲突数,便于给出"去变更页解决"的引导)。 */
+    public record PullStep(GitProcess.GitResult result, int incoming, int conflicts) {}
+
+    /** 暂存后重试的结果。stashError / pullError 非空表示对应步骤失败。 */
+    public record StashRetry(String stashError, String pullError, GitProcess.GitResult pop,
+                             int incoming, int conflicts) {}
+
+    /** 抓取上游并把仓库现状整理成拉取分流依据。 */
+    public static org.easygit.core.model.PullPlan pullPlan(Path repo) {
+        String up = upstream(repo);
+        if (up == null) return org.easygit.core.model.PullPlan.noUpstream();
+        GitProcess.GitResult f = fetchUpstream(repo);
+        if (!f.ok()) return org.easygit.core.model.PullPlan.failed(f.message());
+        int[] ab = aheadBehind(repo);
+        return new org.easygit.core.model.PullPlan(up, ab[0], ab[1], unmergedCount(repo), dirty(repo), null);
+    }
+
+    /** 跑一步拉取动作(合并/变基/快进),顺便量出新增了几个提交、有没有产生冲突。 */
+    public static PullStep runPullStep(Path repo, java.util.function.Supplier<GitProcess.GitResult> step) {
+        String headBefore = headSha(repo);
+        GitProcess.GitResult r = step.get();
+        int incoming = r.ok() && headBefore != null && !headBefore.isBlank()
+                ? countRange(repo, headBefore + "..HEAD") : -1;
+        return new PullStep(r, incoming, unmergedCount(repo));
+    }
+
+    /** 暂存本地改动 → 重试拉取 → 无论成败都恢复改动。 */
+    public static StashRetry stashRetryPull(Path repo, String name,
+                                            java.util.function.Supplier<GitProcess.GitResult> step) {
+        GitProcess.GitResult stash = stashPush(repo, "EasyGit 自动暂存(" + name + ")");
+        if (!stash.ok()) return new StashRetry(stash.message(), null, null, -1, 0);
+        PullStep step1 = runPullStep(repo, step);
+        GitProcess.GitResult pop = stashPop(repo);   // 成败都要恢复本地改动
+        return new StashRetry(null, step1.result().ok() ? null : step1.result().message(),
+                pop, step1.incoming(), step1.conflicts());
+    }
+
     public static GitProcess.GitResult push(Path repo, String branch, String upstream, boolean force) {
         if (upstream == null || upstream.isBlank()) {
             // 尚无上游:推送并设置 origin/<branch> 为上游
