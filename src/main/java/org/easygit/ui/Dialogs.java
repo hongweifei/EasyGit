@@ -231,6 +231,35 @@ public final class Dialogs {
         });
     }
 
+    // ---------- 拉取:分叉时选合并还是变基 ----------
+
+    /**
+     * 本地与远端各有新提交时,问用户用哪种方式拉取。
+     *
+     * @return "merge"(合并,产生合并提交) / "rebase"(变基,历史保持线性) / null(取消)
+     */
+    public static String pullStrategy(int ahead, int behind, boolean dirty) {
+        Dialog<String> d = new Dialog<>();
+        Fx.icon(d);
+        d.setTitle("拉取方式");
+        d.setHeaderText("本地有 " + ahead + " 个提交未推送,远端有 " + behind + " 个新提交");
+        Label body = new Label((dirty ? "注意:工作区还有未提交的改动,可能会挡住这次拉取。\n\n" : "")
+                + "合并拉取:两端历史都保留,产生一个合并提交(适合已经在共享的分支上工作)。\n"
+                + "变基拉取:把这 " + ahead + " 个本地提交重放到远端之后,历史保持一条直线"
+                + "(适合还没推送过的本地提交)。");
+        body.setWrapText(true);
+        body.setMaxWidth(420);
+        VBox root = new VBox(8, body);
+        root.setPadding(new Insets(8));
+        d.getDialogPane().setContent(root);
+        ButtonType merge = new ButtonType("合并拉取", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+        ButtonType rebase = new ButtonType("变基拉取", javafx.scene.control.ButtonBar.ButtonData.APPLY);
+        ButtonType cancel = new ButtonType("取消", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
+        d.getDialogPane().getButtonTypes().addAll(merge, rebase, cancel);
+        d.setResultConverter(bt -> bt == merge ? "merge" : bt == rebase ? "rebase" : null);
+        return d.showAndWait().orElse(null);
+    }
+
     // ---------- 推送到指定远程 ----------
 
     /** 推送对话框:任选本地分支 + 任选远程,可选设置上游/强制。defaultBranch 为 null 时自动选中当前分支。 */

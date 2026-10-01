@@ -172,7 +172,7 @@ public class MainWindow {
         // 右侧高频组:拉取 / 推送 / 刷新(真实文字钮,不用神秘图标)
         Button pullBtn = new Button("拉取");
         pullBtn.getStyleClass().add("ghost");
-        pullBtn.setOnAction(e -> network("拉取", true, () -> NativeGit.pull(RepoManager.get().current())));
+        pullBtn.setOnAction(e -> pull());
         Button pushBtn = new Button("推送");
         pushBtn.getStyleClass().add("ghost");
         pushBtn.setOnAction(e -> Dialogs.pushDialog(null, this::refreshAll));
@@ -407,6 +407,161 @@ public class MainWindow {
     }
 
     private record NetResult(GitProcess.GitResult result, int incoming) {}
+
+    // ---------- 拉取 ----------
+
+    /** 抓取后的现状快照。error 非空表示抓取本身失败。 */
+    private record PullPlan(String upstream, int ahead, int behind, int conflicts, boolean dirty, String error) {
+        static PullPlan noUpstream() { return new PullPlan(null, 0, 0, 0, false, null); }
+        static PullPlan failed(String error) { return new PullPlan(null, 0, 0, 0, false, error); }
+    }
+
+    /** 拉取那一步的结果(含冲突数,便于给出"去变更页解决"的引导)。 */
+    private record PullStep(GitProcess.GitResult result, int incoming, int conflicts) {}
+
+    /** 暂存后重试的结果。 */
+    private record StashRetry(String stashError, String pullError, GitProcess.GitResult pop,
+                              int incoming, int conflicts) {}
+
+    /**
+     * 拉取:先抓上游,再按「已是最新 / 可快进 / 已分叉」分流。
+     *
+     * 以前直接 `git pull --no-edit`:本地没有提交时也会产生合并提交,分叉时没有任何选择,
+     * 失败时只丢一段英文报错。现在:
+     *  - 已是最新 → 不执行合并,直接提示;
+     *  - 本地无提交、远端有 → --ff-only 快进,不产生合并提交;
+     *  - 已分叉 → 让用户选「合并拉取 / 变基拉取」;
+     *  - 被本地未提交改动挡住 → 询问后暂存、重试、自动恢复;
+     *  - 冲突/网络/凭据等失败 → 中文提示 + 下一步建议。
+     */
+    private void pull() {
+        Path repo = RepoManager.get().current();
+        if (repo == null) return;
+        Fx.bg("获取远程更新…", () -> {
+            String up = NativeGit.upstream(repo);
+            if (up == null) return PullPlan.noUpstream();
+            GitProcess.GitResult f = NativeGit.fetchUpstream(repo);
+            if (!f.ok()) return PullPlan.failed(f.message());
+            int[] ab = NativeGit.aheadBehind(repo);
+            return new PullPlan(up, ab[0], ab[1], NativeGit.unmergedCount(repo), NativeGit.dirty(repo), null);
+        }, plan -> {
+            if (plan.error() != null) {
+                Fx.error("拉取失败", NativeGit.friendlyError(plan.error()), plan.error());
+                return;
+            }
+            if (plan.upstream() == null) {
+                Fx.info("无法拉取", "当前分支还没有设置上游分支,不知道从哪里拉取。\n\n"
+                        + "可先「推送」一次(会自动设置上游),或用「抓取」后手动合并。");
+                return;
+            }
+            if (plan.conflicts() > 0) {
+                Fx.info("先处理冲突", "当前已有 " + plan.conflicts() + " 个文件处于冲突状态。\n\n"
+                        + "解决冲突或「中止合并」之后再拉取。");
+                tabs.getSelectionModel().select(0);
+                return;
+            }
+            if (plan.behind() == 0) {
+                Fx.status("拉取完成:已是最新");
+                refreshAll();
+                return;
+            }
+            if (plan.ahead() == 0) {
+                // 纯快进:本地没有额外提交,不该产生合并提交
+                runPull(repo, "拉取中…", "拉取", () -> NativeGit.mergeUpstreamFfOnly(repo), false);
+                return;
+            }
+            String mode = Dialogs.pullStrategy(plan.ahead(), plan.behind(), plan.dirty());
+            if (mode == null) return;
+            boolean rebase = "rebase".equals(mode);
+            String name = rebase ? "变基拉取" : "合并拉取";
+            runPull(repo, name + "…", name,
+                    () -> rebase ? NativeGit.rebaseOntoUpstream(repo) : NativeGit.mergeUpstream(repo), rebase);
+        });
+    }
+
+    /** 执行合并/变基那一步,并把结果翻译成用户能懂的状态。 */
+    private void runPull(Path repo, String busy, String name,
+                         java.util.function.Supplier<GitProcess.GitResult> step, boolean rebase) {
+        Fx.bg(busy, () -> {
+            String headBefore = NativeGit.headSha(repo);
+            GitProcess.GitResult r = step.get();
+            int incoming = r.ok() && headBefore != null && !headBefore.isBlank()
+                    ? NativeGit.countRange(repo, headBefore + "..HEAD") : -1;
+            return new PullStep(r, incoming, NativeGit.unmergedCount(repo));
+        }, res -> {
+            GitProcess.GitResult r = res.result();
+            UiLog.op("git " + name + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
+            if (r.ok()) {
+                reportPullDone(name, res.incoming(), res.conflicts());
+                return;
+            }
+            if (NativeGit.isLocalObstruction(r.message())) {
+                if (Fx.confirm(name + "被本地改动挡住",
+                        "本地未提交的改动会被覆盖,git 拒绝了本次" + name + "。\n\n"
+                                + "先暂存(stash)这些改动,重试" + name + ",成功后再自动恢复?")) {
+                    retryPullWithStash(repo, name, step);
+                }
+                return;
+            }
+            String hint = NativeGit.friendlyError(r.message());
+            if (hint.equals(r.message().strip())) {
+                Fx.error(name + "失败", r.message(), null);
+            } else {
+                Fx.error(name + "失败", hint, r.message());
+            }
+        });
+    }
+
+    /** 暂存本地改动 → 重试拉取 → 自动恢复改动。 */
+    private void retryPullWithStash(Path repo, String name,
+                                    java.util.function.Supplier<GitProcess.GitResult> step) {
+        Fx.bg("暂存改动并重试…", () -> {
+            GitProcess.GitResult stash = NativeGit.stashPush(repo, "EasyGit 自动暂存(" + name + ")");
+            if (!stash.ok()) return new StashRetry(stash.message(), null, null, -1, 0);
+            String headBefore = NativeGit.headSha(repo);
+            GitProcess.GitResult r = step.get();
+            int incoming = r.ok() && headBefore != null && !headBefore.isBlank()
+                    ? NativeGit.countRange(repo, headBefore + "..HEAD") : -1;
+            GitProcess.GitResult pop = NativeGit.stashPop(repo);   // 成败都要恢复本地改动
+            return new StashRetry(null, r.ok() ? null : r.message(), pop, incoming,
+                    NativeGit.unmergedCount(repo));
+        }, res -> {
+            if (res.stashError() != null) {
+                Fx.error("暂存失败", NativeGit.friendlyError(res.stashError()), res.stashError());
+                return;
+            }
+            if (res.pullError() != null) {
+                Fx.error(name + "失败", NativeGit.friendlyError(res.pullError()), res.pullError());
+                return;
+            }
+            UiLog.op("git 暂存→" + name + "→恢复 ✓", "", "");
+            if (res.pop() != null && !res.pop().ok()) {
+                UiLog.op("git stash pop ✖", res.pop().out(), res.pop().err());
+                Fx.status(name + "完成,但恢复暂存改动时有冲突,请到「变更」页查看");
+                tabs.getSelectionModel().select(0);
+                refreshAll();
+                return;
+            }
+            reportPullDone(name, res.incoming(), res.conflicts());
+            Fx.status("本地改动已恢复");
+        });
+    }
+
+    /** 拉取成功后的状态栏文案 + 冲突引导。 */
+    private void reportPullDone(String name, int incoming, int conflicts) {
+        if (conflicts > 0) {
+            Fx.status(name + "完成,但有 " + conflicts + " 个文件冲突,请到「变更」页解决");
+            UiLog.line("⚠ " + name + " 产生 " + conflicts + " 个冲突文件");
+            tabs.getSelectionModel().select(0);
+        } else if (incoming > 0) {
+            Fx.status(name + "完成:新增 " + incoming + " 个提交");
+        } else if (incoming == 0) {
+            Fx.status(name + "完成:已是最新");
+        } else {
+            Fx.status(name + "完成");
+        }
+        refreshAll();
+    }
 
     // ---------- 欢迎页 ----------
 

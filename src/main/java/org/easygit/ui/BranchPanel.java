@@ -205,7 +205,7 @@ public class BranchPanel extends VBox {
             }
             if (b.current) {
                 var r = org.easygit.core.NativeGit.pull(repo);
-                if (!r.ok()) throw new IllegalStateException(r.message());
+                if (!r.ok()) throw new IllegalStateException(org.easygit.core.NativeGit.friendlyError(r.message()));
                 return "已更新当前分支 " + b.name + " ← " + b.upstream;
             }
             int i = b.upstream.indexOf('/');
@@ -218,7 +218,8 @@ public class BranchPanel extends VBox {
             String remoteBranch = b.upstream.substring(i + 1);
             var r = org.easygit.core.NativeGit.fetchBranch(repo, remote, remoteBranch, b.name);
             if (!r.ok()) {
-                throw new IllegalStateException("更新失败(通常是非快进更新,git 不允许直接覆盖):\n" + r.message());
+                throw new IllegalStateException("更新失败(通常是非快进更新,git 不允许直接覆盖):\n"
+                        + org.easygit.core.NativeGit.friendlyError(r.message()));
             }
             return "已快进更新 " + b.name + " ← " + b.upstream;
         }, msg -> {

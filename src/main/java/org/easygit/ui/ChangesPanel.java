@@ -592,11 +592,11 @@ public class ChangesPanel extends VBox {
                     toCommit.add(f.path);
                     act(() -> new JGitService(repo()).stage(List.of(f.path)), "已标记解决 " + f.path);
                 }));
-                menu.getItems().add(item("中止合并(恢复到合并前)", e -> {
-                    if (Fx.confirm("中止合并", "确定中止当前合并,恢复到合并前的状态?")) {
-                        Fx.bg("中止合并…", () -> org.easygit.core.NativeGit.mergeAbort(repo()).ok(),
+                menu.getItems().add(item("中止合并/变基(恢复原状)", e -> {
+                    if (Fx.confirm("中止操作", "确定中止进行中的合并/变基,恢复到操作前的状态?")) {
+                        Fx.bg("中止…", () -> org.easygit.core.NativeGit.abortInProgress(repo()).ok(),
                                 ok -> {
-                                    Fx.status(ok ? "已中止合并" : "中止合并失败(可能没有正在进行的合并)");
+                                    Fx.status(ok ? "已中止,恢复原状" : "中止失败(可能没有进行中的合并/变基)");
                                     refreshAll.run();
                                 });
                     }

@@ -192,6 +192,154 @@ public final class NativeGit {
         return GitProcess.in(repo).execNet("pull", "--no-edit");
     }
 
+    // ---------- 拉取管线:先抓取上游,再按"已最新 / 可快进 / 已分叉"分流 ----------
+
+    /** 当前分支的上游(如 origin/main);游离 HEAD 或未设置上游返回 null。 */
+    public static String upstream(Path repo) {
+        GitProcess.GitResult r = GitProcess.in(repo)
+                .exec("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}");
+        if (!r.ok()) return null;
+        String s = r.out().strip();
+        return s.isEmpty() || s.contains("@{u}") ? null : s;
+    }
+
+    /**
+     * 相对上游的提交数,返回 {领先, 落后}。
+     * rev-list --left-right @{u}...HEAD 输出「落后&lt;TAB&gt;领先」,取不到时返回 {0,0}。
+     */
+    public static int[] aheadBehind(Path repo) {
+        GitProcess.GitResult r = GitProcess.in(repo)
+                .exec("rev-list", "--count", "--left-right", "@{u}...HEAD");
+        if (!r.ok()) return new int[]{0, 0};
+        String[] t = r.out().strip().split("\\s+");
+        if (t.length < 2) return new int[]{0, 0};
+        try {
+            return new int[]{Integer.parseInt(t[1]), Integer.parseInt(t[0])};
+        } catch (NumberFormatException e) {
+            return new int[]{0, 0};
+        }
+    }
+
+    /** 只抓当前分支上游所在的远程(--prune),比 fetch --all 快且不动其他远程。 */
+    public static GitProcess.GitResult fetchUpstream(Path repo) {
+        String up = upstream(repo);
+        if (up == null) return new GitProcess.GitResult(-1, "", "当前分支没有设置上游分支");
+        int i = up.indexOf('/');
+        if (i <= 0 || i == up.length() - 1) {
+            return new GitProcess.GitResult(-1, "", "上游 " + up + " 不是「远程/分支」形式,无法抓取");
+        }
+        return fetchRemote(repo, up.substring(0, i));
+    }
+
+    /** 快进到上游(本地没有额外提交时使用,不产生合并提交)。 */
+    public static GitProcess.GitResult mergeUpstreamFfOnly(Path repo) {
+        return GitProcess.in(repo).exec("merge", "--ff-only", "@{u}");
+    }
+
+    /** 合并上游(分叉时选择"合并拉取",产生合并提交)。 */
+    public static GitProcess.GitResult mergeUpstream(Path repo) {
+        return GitProcess.in(repo).exec("merge", "--no-edit", "@{u}");
+    }
+
+    /** 变基到上游(分叉时选择"变基拉取",本地提交重放、历史保持线性)。 */
+    public static GitProcess.GitResult rebaseOntoUpstream(Path repo) {
+        return GitProcess.in(repo).exec("rebase", "@{u}");
+    }
+
+    /** 冲突文件数(未解决)。取不到状态时返回 0。 */
+    public static int unmergedCount(Path repo) {
+        try {
+            return (int) status(repo).changes().stream().filter(f -> f.unmerged).count();
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** 工作区是否有未提交改动(含未跟踪)。 */
+    public static boolean dirty(Path repo) {
+        try {
+            return !status(repo).changes().isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 暂存工作区改动(含未跟踪),拉取被本地改动挡住时用。 */
+    public static GitProcess.GitResult stashPush(Path repo, String message) {
+        return GitProcess.in(repo).exec("stash", "push", "-u", "-m", message);
+    }
+
+    public static GitProcess.GitResult stashPop(Path repo) {
+        return GitProcess.in(repo).exec("stash", "pop");
+    }
+
+    /** 中止进行中的合并/变基/拣选(按仓库当前状态挑命令)。 */
+    public static GitProcess.GitResult abortInProgress(Path repo) {
+        Path g = repo.resolve(".git");
+        if (java.nio.file.Files.isDirectory(g.resolve("rebase-merge"))
+                || java.nio.file.Files.isDirectory(g.resolve("rebase-apply"))) {
+            return GitProcess.in(repo).exec("rebase", "--abort");
+        }
+        if (java.nio.file.Files.exists(g.resolve("CHERRY_PICK_HEAD"))) {
+            return GitProcess.in(repo).exec("cherry-pick", "--abort");
+        }
+        return mergeAbort(repo);
+    }
+
+    /** 这类报错说明"等一下重试也没用",适合弹对话框;网络类则适合提示后重试。 */
+    public static boolean isLocalObstruction(String message) {
+        String m = lower(message);
+        return m.contains("your local changes") || m.contains("would be overwritten")
+                || m.contains("please commit your changes") || m.contains("local changes to the following files");
+    }
+
+    /**
+     * 把 git 的英文报错归一成中文提示 + 下一步建议。
+     * 只做归类,不吞原始输出(调用方把原文放进错误框的详情里)。
+     */
+    public static String friendlyError(String message) {
+        String m = message == null ? "" : message;
+        String low = lower(m);
+        if (low.contains("could not read username") || low.contains("terminal prompts disabled")
+                || low.contains("authentication failed") || low.contains("invalid username or password")
+                || low.contains("http 401") || low.contains("http 403")) {
+            return "远程要登录才能访问,而界面里不能输入账号密码。\n"
+                    + "先在终端里对同一个远程执行一次 git pull,让凭据管理器记住凭据,再回来重试。";
+        }
+        if (low.contains("permission denied (publickey)") || low.contains("no supported authentication")) {
+            return "SSH 公钥认证失败(界面里无法输入口令)。\n"
+                    + "确认 ssh-agent 已加载密钥;带口令的密钥请先执行 ssh-add。";
+        }
+        if (low.contains("host key verification failed") || low.contains("remote host identification has changed")) {
+            return "SSH 主机密钥未确认。\n先在终端执行一次 ssh -T <主机> 接受主机密钥。";
+        }
+        if (low.contains("could not resolve host") || low.contains("unable to access")
+                || low.contains("connection refused") || low.contains("failed to connect")
+                || low.contains("connection timed out") || low.contains("network is unreachable")) {
+            return "连不上远程(网络 / 代理 / 地址问题)。\n检查网络与代理设置,或稍后重试。";
+        }
+        if (low.contains("no tracking information") || low.contains("no upstream")) {
+            return "当前分支还没有上游分支,不知道从哪里拉取。\n"
+                    + "可先「推送」一次(会自动设置上游),或抓取后手动合并。";
+        }
+        if (low.contains("your local changes") || low.contains("would be overwritten")
+                || low.contains("please commit your changes")) {
+            return "本地未提交的改动会被覆盖,git 拒绝了本次拉取。\n可先提交,或让 EasyGit 暂存改动后重试。";
+        }
+        if (low.contains("not possible to fast-forward") || low.contains("non-fast-forward")
+                || low.contains("divergent branches") || low.contains("have diverged")) {
+            return "本地与远端各有新提交(已分叉),不能快进。\n用「合并拉取」或「变基拉取」都可以继续。";
+        }
+        if (low.contains("refusing to merge unrelated histories")) {
+            return "两个历史没有共同祖先,git 拒绝合并。\n确认远程地址是否换成了另一个项目的仓库。";
+        }
+        return m.strip().isEmpty() ? "未知错误" : m.strip();
+    }
+
+    private static String lower(String s) {
+        return s == null ? "" : s.toLowerCase(java.util.Locale.ROOT);
+    }
+
     public static GitProcess.GitResult push(Path repo, String branch, String upstream, boolean force) {
         if (upstream == null || upstream.isBlank()) {
             // 尚无上游:推送并设置 origin/<branch> 为上游
@@ -227,7 +375,7 @@ public final class NativeGit {
     }
 
     public static GitProcess.GitResult clone(String url, Path targetDir) {
-        return GitProcess.global("clone", "--progress", url, targetDir.toString());
+        return GitProcess.globalNet("clone", "--progress", url, targetDir.toString());
     }
 
     public static GitProcess.GitResult init(Path targetDir) {
