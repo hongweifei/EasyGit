@@ -33,17 +33,36 @@ public final class GitProcess {
 
     public static GitProcess in(Path repoDir) { return new GitProcess(repoDir); }
 
+    /**
+     * 网络操作超时。GUI 里没有终端,凭据/主机密钥一旦需要交互就会一直等——
+     * 所以网络操作统一「关掉子进程 stdin + 禁终端提示 + SSH BatchMode」,
+     * 出不来就快速失败并给出中文提示,而不是挂到超时。
+     */
+    private static final Duration NET_TIMEOUT = Duration.ofMinutes(5);
+
+    /** 是否配置了 core.sshCommand(配置了就不覆盖用户的 ssh 命令)。 */
+    private static final Map<String, Boolean> SSH_CMD_CONFIGURED = new java.util.concurrent.ConcurrentHashMap<>();
+
     /** 不依赖仓库的全局命令(clone 等)。 */
     public static GitResult global(String... args) {
-        return new GitProcess(null).exec(Duration.ofMinutes(30), args);
+        return new GitProcess(null).exec(Duration.ofMinutes(30), false, args);
     }
 
-    public GitResult exec(String... args) { return exec(Duration.ofMinutes(10), args); }
+    /** 不依赖仓库的全局网络命令(clone 等)。 */
+    public static GitResult globalNet(String... args) {
+        return new GitProcess(null).exec(Duration.ofMinutes(30), true, args);
+    }
 
-    /** 长时间网络操作。 */
-    public GitResult execNet(String... args) { return exec(Duration.ofMinutes(30), args); }
+    public GitResult exec(String... args) { return exec(Duration.ofMinutes(10), false, args); }
 
-    public GitResult exec(Duration timeout, String... args) {
+    /** 长时间网络操作(fetch/pull/push/lfs)。 */
+    public GitResult execNet(String... args) { return exec(NET_TIMEOUT, true, args); }
+
+    public GitResult execNet(Duration timeout, String... args) { return exec(timeout, true, args); }
+
+    public GitResult exec(Duration timeout, String... args) { return exec(timeout, false, args); }
+
+    public GitResult exec(Duration timeout, boolean net, String... args) {
         List<String> cmd = new ArrayList<>();
         // 优先使用 Git for Windows(Git Bash)的 git
         cmd.add(GitLocator.executable());
@@ -59,6 +78,7 @@ public final class GitProcess {
         ProcessBuilder pb = new ProcessBuilder(cmd);
         if (dir != null) pb.directory(dir.toFile());
         pb.environment().put("GIT_OPTIONAL_LOCKS", "0");
+        if (net) applyNonInteractiveEnv(pb);
         // 注意:不要往 PATH 注入 Git 的 usr\bin 等目录 —— 实测会让 git-remote-https
         // 加载错误版本的 DLL,报 "remote helper 'https' aborted session"(退出码 128)。
         // git 自己会通过 exec-path 定位远程助手/钩子/凭据助手,无需我们干预。
@@ -68,6 +88,9 @@ public final class GitProcess {
         Process p = null;
         try {
             p = pb.start();
+            // 子进程 stdin 立刻收到 EOF:任何"读一行输入"的提示都会立即失败而不是永久阻塞。
+            // (GUI 里没有终端,这是"拉取后界面卡住"那类问题的根因之一)
+            try { p.getOutputStream().close(); } catch (Exception ignored) {}
             Process proc = p;
             Thread tOut = pump(proc, false, out);
             Thread tErr = pump(proc, true, err);
@@ -85,6 +108,29 @@ public final class GitProcess {
         } catch (Exception e) {
             return new GitResult(-1, out.toString(), e.getMessage() == null ? e.toString() : e.getMessage());
         }
+    }
+
+    /**
+     * 网络操作的非交互环境:
+     * - GIT_TERMINAL_PROMPT=0:凭据管理器(GCM 等)照常弹窗,但禁止退化成"读终端"而卡死;
+     * - SSH 加 BatchMode=yes:有口令的密钥、未确认的主机密钥立刻报错而不是等输入。
+     * 用户自己设置过 GIT_SSH_COMMAND / GIT_SSH,或仓库配置了 core.sshCommand 时一律不动,
+     * 避免覆盖他们的自定义 ssh。
+     */
+    private void applyNonInteractiveEnv(ProcessBuilder pb) {
+        Map<String, String> env = pb.environment();
+        env.put("GIT_TERMINAL_PROMPT", "0");
+        if (env.containsKey("GIT_SSH_COMMAND") || env.containsKey("GIT_SSH")) return;
+        if (dir != null && sshCommandConfigured(dir)) return;
+        env.put("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    }
+
+    private static boolean sshCommandConfigured(Path repoDir) {
+        return SSH_CMD_CONFIGURED.computeIfAbsent(repoDir.toAbsolutePath().toString(), k -> {
+            GitResult r = new GitProcess(repoDir).exec(Duration.ofSeconds(5), false,
+                    "config", "--get", "core.sshCommand");
+            return r.ok() && !r.out().isBlank();
+        });
     }
 
     private Thread pump(Process proc, boolean isErr, StringBuilder sink) {

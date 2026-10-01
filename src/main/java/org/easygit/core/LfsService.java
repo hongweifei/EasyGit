@@ -71,16 +71,19 @@ public final class LfsService {
 
     // ---------- 对象操作 ----------
 
+    /** LFS 要搬二进制对象,给比普通网络操作更长的超时(15 分钟)。 */
+    private static final java.time.Duration LFS_TIMEOUT = java.time.Duration.ofMinutes(15);
+
     public static GitProcess.GitResult fetch(Path repo) {
-        return GitProcess.in(repo).execNet("lfs", "fetch");
+        return GitProcess.in(repo).execNet(LFS_TIMEOUT, "lfs", "fetch");
     }
 
     public static GitProcess.GitResult pull(Path repo) {
-        return GitProcess.in(repo).execNet("lfs", "pull");
+        return GitProcess.in(repo).execNet(LFS_TIMEOUT, "lfs", "pull");
     }
 
     public static GitProcess.GitResult prune(Path repo) {
-        return GitProcess.in(repo).execNet("lfs", "prune");
+        return GitProcess.in(repo).execNet(LFS_TIMEOUT, "lfs", "prune");
     }
 
     // ---------- 仓库判断与文件列表 ----------
