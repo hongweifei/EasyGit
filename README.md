@@ -87,7 +87,9 @@ TYPE=dmg ./package.sh   # macOS 也支持 dmg;Linux 可用 TYPE=deb / TYPE=rpm
 mvn test
 ```
 
-- `ParsersTest`:porcelain v2 / log 机器格式 / unified diff / 冲突标记 / 图算法 纯解析单测
+- `ParsersTest`:porcelain v2 / log 机器格式 / unified diff / 冲突标记 纯解析单测
+- `GraphBuilderTest`:提交泳道图不变量(逐行"上行底边 == 下行顶边"、泳道槽位复用、无关泳道贯穿)
+- `PullPipelineTest`:临时真实仓库跑通 上游探测→快进/分叉合并/变基/冲突/暂存重试 与中文报错归类
 - `CoreSmokeTest`:临时真实仓库跑通 提交→历史→分支→stash→合并冲突→blame→重命名检测 全链路
 
 ## 文档
@@ -95,6 +97,7 @@ mvn test
 项目文档统一放在 `docs/`(本文件是入口,新增文档在下面登记一行):
 
 - [docs/DESIGN.md](docs/DESIGN.md):设计语言与界面规范(布局语言、颜色令牌、控件约定、对齐基准、JavaFX 样式坑)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md):代码组织约定(包职责、分层规则、新增代码放哪里、测试策略)
 
 与代码强相关的说明优先写在代码注释里(改代码时不容易漏),`docs/` 只放需要通读的规范。
 
@@ -102,28 +105,32 @@ mvn test
 
 ```
 org.easygit
-├── core/                  # 与 UI 无关的 git 核心
-│   ├── GitProcess         # CLI 子进程封装(UTF-8/超时/并发读管道)
-│   ├── NativeGit          # status/log/diff/blame/for-each-ref/网络操作
+├── core/                  # 与 UI 无关的 git 核心(可无头测试,不依赖 JavaFX)
+│   ├── GitProcess         # CLI 子进程封装(UTF-8/超时/非交互网络操作)
+│   ├── NativeGit          # status/log/diff/blame/for-each-ref/网络操作/拉取流程
 │   ├── JGitService        # JGit:暂存/提交/检出/分支/合并/stash/tag
+│   ├── LfsService         # Git LFS:状态/跟踪规则/fetch/pull/prune
 │   ├── StatusParser       # porcelain v2 -z 解析(XY 定长,处理重命名/冲突)
 │   ├── LogParser          # %x01 分隔的 log 机器格式解析
 │   ├── DiffParser         # unified diff → 文件/hunk/行,含统计
 │   ├── BlameParser        # blame --porcelain 解析
 │   ├── ConflictParser     # 冲突标记解析(diff3 兼容)与按策略解决
 │   ├── GraphBuilder       # 提交 DAG 分道(gitk 风格泳道图)
-│   ├── RepoManager        # 当前仓库、最近仓库、变更通知
-│   └── AppSettings        # ~/.easygit/settings.json
-├── ui/                    # JavaFX 界面
-│   ├── MainWindow         # 工具栏 + 左树 + 中部标签页 + 状态栏 + 欢迎页
-│   ├── HistoryPanel       # 历史(虚拟化列表 + Canvas 泳道)+ 提交详情
-│   ├── ChangesPanel       # 变更四分组 + 提交框
-│   ├── DiffView           # 虚拟化 diff 渲染
-│   ├── BranchPanel        # 分支/远程/标签树与右键操作
-│   ├── StashPanel / BlameView / ConflictDialog / Dialogs
-│   ├── RepoGuard          # 仓库切换守卫:在途刷新任务作废/取消(连续切换仓库不串仓)
-│   └── Fx / StatusBar     # 后台任务调度、忙碌与消息
+│   ├── RepoManager        # 当前仓库、最近仓库、变更通知(含 epoch)
+│   ├── AppSettings        # ~/.easygit/settings.json(延迟合并写盘)
+│   ├── model/             # 只放数据结构:CommitEntry/BranchInfo/FileChange/DiffModels/PullPlan…
+│   └── GitLocator / AppVersion
+├── ui/
+│   ├── MainWindow         # 只做装配与刷新编排(命令栏/欢迎页/拉取流程都已外包)
+│   ├── base/              # 跨面板基础件:Fx(后台调度) / StatusBar / UiLog / RepoGuard
+│   │                      #   HeaderBar(命令栏+LFS 菜单) / WelcomeView
+│   ├── panels/            # 业务面板:ChangesPanel / HistoryPanel / BranchPanel / RepoPanel
+│   │                      #   / StashPanel / OutputPanel / CommitDetailPanel / PullFlow
+│   ├── views/             # 纯展示组件(给定数据即渲染):DiffView / BlameView
+│   └── dialogs/           # 对话框:Dialogs / SettingsDialog / ConflictDialog
 └── resources/css/theme.css # 亮/暗主题(looked-up colors)
+```
+
 ```
 
 性能要点:UI 全程虚拟化(`ListView.setFixedCellSize` + 自绘 Canvas 泳道),
