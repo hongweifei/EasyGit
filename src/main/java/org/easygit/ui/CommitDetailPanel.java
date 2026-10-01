@@ -510,18 +510,6 @@ public class CommitDetailPanel extends VBox {
         return lp.contains(q);
     }
 
-    /** 统一的路径截断:同一列宽下所有行在同一位置截断,… 对齐。 */
-    private static String ellipsizeLeading(String s, int max) {
-        if (s == null || s.length() <= max) return s;
-        return "…" + s.substring(s.length() - Math.max(1, max - 1));
-    }
-
-    /** 按列表可视宽度估算可显示的字符数(扣除徽标/间距)。 */
-    private static int maxPathChars(ListView<?> list) {
-        if (list == null || list.getWidth() <= 0) return 200;
-        return Math.max(12, (int) ((list.getWidth() - 92) / 7.0));
-    }
-
     private static Color extColor(String path) {
         String p = path.toLowerCase();
         String ext = p.contains(".") ? p.substring(p.lastIndexOf('.') + 1) : "";
@@ -553,7 +541,9 @@ public class CommitDetailPanel extends VBox {
                 setTooltip(null);
                 return;
             }
-            Label path = new Label(ellipsizeLeading(displayPath(f), maxPathChars(getListView())));
+            // 全名交给 Label,由 LEADING_ELLIPSIS 按可用宽度自适应:变窄自动截断,
+            // 变宽自动展开(手工按当时宽度截死的话,拉伸后文件名永远停在省略状态)。
+            Label path = new Label(displayPath(f));
             path.setTextOverrun(javafx.scene.control.OverrunStyle.LEADING_ELLIPSIS);
             path.setMinWidth(0);
             path.setMaxWidth(Double.MAX_VALUE);
@@ -591,11 +581,7 @@ public class CommitDetailPanel extends VBox {
             } else {
                 int depth = (getTreeView() != null && getTreeItem() != null)
                         ? getTreeView().getTreeItemLevel(getTreeItem()) : 0;
-                int budget = 200;
-                if (getTreeView() != null && getTreeView().getWidth() > 0) {
-                    budget = Math.max(12, (int) ((getTreeView().getWidth() - 80 - depth * 14) / 7.0));
-                }
-                Label p = new Label(ellipsizeLeading(ent.fullPath(), budget));
+                Label p = new Label(ent.fullPath());
                 p.setTextOverrun(javafx.scene.control.OverrunStyle.LEADING_ELLIPSIS);
                 p.setMinWidth(0);
                 p.setMaxWidth(Double.MAX_VALUE);

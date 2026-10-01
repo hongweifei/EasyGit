@@ -551,7 +551,10 @@ public class ChangesPanel extends VBox {
             String letter = f.shortStatus();
             Label chip = new Label(letter);
             chip.getStyleClass().addAll("status-letter", chipClass(letter));
-            Label name = new Label(ellipsizeLeading(f.displayPath(), maxPathChars(getListView())));
+            // 全名直接交给 Label,由 LEADING_ELLIPSIS 按可用宽度自适应截断:
+            // 此前按"当时的列表宽度"手工截死文本,拉伸面板变宽后单元格不重建立,
+            // 文本还是旧短串,文件名永远省略(2026-10-01 用户反馈)。
+            Label name = new Label(f.displayPath());
             name.setTextOverrun(javafx.scene.control.OverrunStyle.LEADING_ELLIPSIS);
             name.setMinWidth(0);
             name.setMaxWidth(Double.MAX_VALUE);
@@ -611,16 +614,6 @@ public class ChangesPanel extends VBox {
             }
             menu.getItems().add(item("复制路径", e -> copy(f.path)));
             setContextMenu(menu);
-        }
-
-        private String ellipsizeLeading(String s, int max) {
-            if (s == null || s.length() <= max) return s;
-            return "…" + s.substring(s.length() - Math.max(1, max - 1));
-        }
-
-        private int maxPathChars(ListView<?> list) {
-            if (list == null || list.getWidth() <= 0) return 200;
-            return Math.max(12, (int) ((list.getWidth() - 92) / 7.0));
         }
     }
 
