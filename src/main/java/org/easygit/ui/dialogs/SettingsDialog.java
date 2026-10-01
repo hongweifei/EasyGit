@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.dialogs;
 
 import org.easygit.core.AppSettings;
 import org.easygit.core.GitLocator;
@@ -21,6 +21,8 @@ import javafx.scene.layout.VBox;
 
 import java.nio.file.Path;
 import java.util.List;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.UiLog;
 
 /**
  * 设置对话框:Git 配置(当前仓库/全局,常用键快捷编辑 + 全量键值管理) + 应用设置。

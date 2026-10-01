@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.views;
 
 import org.easygit.core.model.DiffModels.DiffFile;
 import org.easygit.core.model.DiffModels.DiffHunk;
@@ -32,6 +32,7 @@ import javafx.scene.text.Text;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.easygit.ui.base.Fx;
 
 /**
  * 高性能 diff 渲染:虚拟化 ListView,行式渲染(行号 + 内容),支持多文件与单文件。

@@ -1,6 +1,6 @@
 package org.easygit;
 
-import org.easygit.ui.Fx;
+import org.easygit.ui.base.Fx;
 import org.easygit.ui.MainWindow;
 import javafx.application.Application;
 import javafx.stage.Stage;

@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.panels;
 
 import org.easygit.core.JGitService;
 import org.easygit.core.model.BranchInfo;
@@ -18,6 +18,9 @@ import javafx.scene.layout.VBox;
 
 import java.nio.file.Path;
 import java.util.List;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.UiLog;
+import org.easygit.ui.dialogs.Dialogs;
 
 /**
  * 左侧面板:当前分支状态 + 本地分支 / 远程分支 / 标签 树。

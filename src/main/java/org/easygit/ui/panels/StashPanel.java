@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.panels;
 
 import org.easygit.core.JGitService;
 import org.easygit.core.model.StashEntry;
@@ -19,6 +19,8 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.UiLog;
 
 /**
  * Stash 面板:创建 / 应用 / pop / 删除。

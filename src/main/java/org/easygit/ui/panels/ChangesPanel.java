@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.panels;
 
 import org.easygit.core.GitProcess;
 import org.easygit.core.JGitService;
@@ -32,6 +32,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.UiLog;
+import org.easygit.ui.base.RepoGuard;
+import org.easygit.ui.views.DiffView;
+import org.easygit.ui.dialogs.ConflictDialog;
 
 /**
  * 变更面板(标记式提交,IDEA/GitHub Desktop 风格):

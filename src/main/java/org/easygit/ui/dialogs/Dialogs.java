@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.dialogs;
 
 import org.easygit.core.NativeGit;
 import org.easygit.core.RepoManager;
@@ -23,6 +23,8 @@ import javafx.scene.layout.VBox;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.UiLog;
 
 /**
  * 通用对话框:打开/克隆/初始化仓库、新建分支、合并、打标签。

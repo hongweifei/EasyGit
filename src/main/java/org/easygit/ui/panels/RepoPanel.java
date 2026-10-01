@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.panels;
 
 import org.easygit.core.AppSettings;
 import org.easygit.core.RepoManager;
@@ -23,6 +23,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.dialogs.Dialogs;
 
 /**
  * 仓库面板:按分组展示所有受管理的仓库,单击切换,右键管理(改名/分组/移除)。

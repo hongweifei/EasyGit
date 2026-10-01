@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.panels;
 
 import org.easygit.core.model.CommitEntry;
 import org.easygit.core.model.DiffModels.DiffFile;
@@ -28,6 +28,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.RepoGuard;
+import org.easygit.ui.views.DiffView;
 
 /**
  * 提交详情(单列布局):

@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.views;
 
 import org.easygit.core.model.BlameLine;
 import javafx.geometry.Insets;
@@ -16,6 +16,8 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.RepoGuard;
 
 /**
  * Blame(行级追溯)视图。

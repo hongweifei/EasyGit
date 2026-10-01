@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.dialogs;
 
 import org.easygit.core.JGitService;
 import org.easygit.core.model.ConflictModels.ConflictFile;
@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.easygit.ui.base.Fx;
 
 /**
  * 合并冲突解决对话框:

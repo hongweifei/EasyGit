@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.base;
 
 import java.util.function.Consumer;
 

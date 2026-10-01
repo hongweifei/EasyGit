@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.panels;
 
 import org.easygit.core.GraphBuilder;
 import org.easygit.core.model.BranchInfo;
@@ -26,6 +26,9 @@ import javafx.scene.shape.StrokeLineJoin;
 
 import java.nio.file.Path;
 import java.util.List;
+import org.easygit.ui.base.Fx;
+import org.easygit.ui.base.RepoGuard;
+import org.easygit.ui.dialogs.Dialogs;
 
 /**
  * 历史面板:提交图(虚拟化列表 + Canvas 泳道图)+ 提交详情。

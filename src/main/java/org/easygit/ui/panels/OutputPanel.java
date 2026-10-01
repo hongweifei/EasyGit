@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.panels;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -13,6 +13,7 @@ import javafx.scene.layout.VBox;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import org.easygit.ui.base.UiLog;
 
 /**
  * 底部输出面板:展示 git 操作(commit/push/pull/reset…)的命令输出。

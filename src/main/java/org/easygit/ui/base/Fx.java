@@ -1,4 +1,4 @@
-package org.easygit.ui;
+package org.easygit.ui.base;
 
 import javafx.application.Platform;
 import javafx.geometry.Pos;
