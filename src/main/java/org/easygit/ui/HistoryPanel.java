@@ -247,6 +247,11 @@ public class HistoryPanel extends VBox {
             return new HistoryLoad(log, unpushed);
         }, data -> {
             if (seq != histSeq) return;
+            // 这条路径(勾选「所有分支」/清文件筛选)此前漏了构图:加载出来的
+            // CommitEntry 全是默认值(lane=0、edges 空、hasIncoming=false),
+            // 所有提交塌进一条道、merge 不画弯出、行间断开。与 MainWindow 的
+            // 加载路径保持一致,这里也必须 build。
+            GraphBuilder.build(data.log());
             setCommits(data.log(), data.unpushed());
         });
     }
