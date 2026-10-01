@@ -259,7 +259,8 @@ public class MainWindow {
 
     /** 工具栏合并对话框用的分支快照(在刷新时保存)。 */
     private List<BranchInfo> snapshotBranches = List.of();
-    private String lastHeadSha;
+    /** 上一次轮询看到的引用指纹(HEAD + 所有分支/标签),用于判断历史页要不要重载。 */
+    private String lastRefsFingerprint;
 
     /**
      * 网络操作(拉取 / 抓取)。
@@ -366,7 +367,7 @@ public class MainWindow {
         // 切换到不同仓库时:立即清掉上一个仓库的内容与 Blame 页签
         if (!repo.toString().equals(loadedRepoPath)) {
             loadedRepoPath = repo.toString();
-            lastHeadSha = null;
+            lastRefsFingerprint = null;   // 新仓库:下一次轮询强制重载历史
             currentStatus = null;
             tabs.getTabs().removeIf(t -> t.getText().startsWith("Blame:"));
             changesPanel.onRepoSwitched();
@@ -407,7 +408,8 @@ public class MainWindow {
         }, data -> {
             refreshingEpoch = -1;
             if (data == null) return;
-            lastHeadSha = data.head();
+            // 整仓刷新已经重载过历史,顺手把指纹对齐,免得下一拍轮询再白刷一次
+            lastRefsFingerprint = NativeGit.refsFingerprint(repo);
             currentStatus = data.status;
             snapshotBranches = data.branches;
             changesPanel.refresh(data.status);
@@ -452,18 +454,20 @@ public class MainWindow {
         if (repo == null) return;
         Fx.bg("刷新状态…", guard, () -> {
             try {
-                String head = NativeGit.headSha(repo);
+                // 指纹覆盖所有引用,而不只是 HEAD:勾选「所有分支」时侧支/远程分支
+                // 的新提交不动 HEAD,只看 HEAD 会让历史页永远不刷新(用户必须手动点)。
+                String refs = NativeGit.refsFingerprint(repo);
                 StatusResult st = NativeGit.status(repo);
-                return new LightData(st, head);
+                return new LightData(st, refs);
             } catch (Exception ex) {
                 UiLog.line("✖ 读取仓库状态失败: " + ex.getMessage());
                 return null;
             }
         }, data -> {
             if (data == null) return;
-            // HEAD 变化(新提交/amend/检出)→ 自动重载历史
-            if (lastHeadSha == null || !data.head().equals(lastHeadSha)) {
-                lastHeadSha = data.head();
+            // 引用发生变化(新提交/amend/检出/新分支/远程更新)→ 自动重载历史
+            if (lastRefsFingerprint == null || !data.refs().equals(lastRefsFingerprint)) {
+                lastRefsFingerprint = data.refs();
                 historyPanel.refresh();
             }
             currentStatus = data.st();
@@ -502,5 +506,5 @@ public class MainWindow {
 
     private record HistoryData(List<CommitEntry> log, java.util.Set<String> unpushed) {}
 
-    private record LightData(StatusResult st, String head) {}
+    private record LightData(StatusResult st, String refs) {}
 }

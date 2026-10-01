@@ -453,6 +453,23 @@ public final class NativeGit {
     }
 
     /**
+     * 所有引用的指纹(HEAD + 本地/远程分支 + 标签)。
+     *
+     * 轮询只比对 HEAD 是不够的:勾选「所有分支」时,历史页要显示全部分支的提交,
+     * 而侧支分支、远程跟踪分支出现新提交并不会移动 HEAD —— 于是历史页永远不刷新,
+     * 用户必须手动点刷新(2026-10-01 反馈的实际现象)。
+     *
+     * 用 for-each-ref 一次拿到全部引用,拼成一个字符串当指纹:比逐个 rev-parse 省进程,
+     * 内容变化(新增/移动/删除引用)都能反映出来。
+     */
+    public static String refsFingerprint(Path repo) {
+        GitProcess.GitResult r = GitProcess.in(repo)
+                .exec("for-each-ref", "--format=%(objectname) %(refname)");
+        if (!r.ok()) return headSha(repo);   // 取不到引用时退回只盯 HEAD,至少不比原来差
+        return r.out();
+    }
+
+    /**
      * 把当前分支重置到某个提交。
      * mode: mixed(默认,改动保留在工作区) / soft(改动保留在暂存区) / hard(彻底丢弃)。
      */

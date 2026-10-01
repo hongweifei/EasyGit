@@ -197,6 +197,42 @@ class PullPipelineTest {
                 "认不出的报错必须原样返回,不能吞掉");
     }
 
+    @Test
+    @DisplayName("引用指纹:侧支/远程分支新提交(HEAD 不动)也能被发现")
+    void refsFingerprintCatchesNonHeadRefChanges() throws Exception {
+        String base0 = NativeGit.refsFingerprint(work);
+        assertFalse(base0.isBlank(), "指纹不应为空");
+
+        // 1) 侧支分支新提交:HEAD 完全不动
+        git(work, "branch", "-f", "side", "HEAD");
+        git(work, "checkout", "-q", "side");
+        Files.writeString(work.resolve("side.txt"), "side\n");
+        commit(work, "side-1");
+        git(work, "checkout", "-q", "master");
+        String afterSide = NativeGit.refsFingerprint(work);
+        assertNotEquals(base0, afterSide,
+                "侧支分支前进后指纹必须变化,否则历史页不会自动刷新(用户得手动点刷新)");
+        assertTrue(afterSide.contains("refs/heads/side"), "指纹应包含侧支引用");
+
+        // 2) 远程跟踪分支前进(他人推送 + fetch)
+        git(work, "checkout", "-q", "-b", "tmp-push", "origin/master");
+        Files.writeString(work.resolve("remote.txt"), "remote\n");
+        commit(work, "remote-1");
+        git(work, "push", "-q", "origin", "tmp-push:master");
+        git(work, "checkout", "-q", "master");
+        git(work, "branch", "-q", "-D", "tmp-push");
+        git(work, "fetch", "-q", "origin");
+        String afterFetch = NativeGit.refsFingerprint(work);
+        assertNotEquals(afterSide, afterFetch, "fetch 更新远程跟踪分支后指纹必须变化");
+
+        // 3) 删掉引用也要能发现
+        git(work, "branch", "-D", "side");
+        assertNotEquals(afterFetch, NativeGit.refsFingerprint(work), "删除分支后指纹必须变化");
+
+        // 4) 没有任何变化时指纹必须稳定(否则每 5 秒白刷一次历史)
+        assertEquals(NativeGit.refsFingerprint(work), NativeGit.refsFingerprint(work));
+    }
+
     // ---------- git 夹具 ----------
 
     private static void config(Path repo) throws Exception {
