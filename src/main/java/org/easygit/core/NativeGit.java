@@ -116,18 +116,33 @@ public final class NativeGit {
     private static final String REF_FORMAT = "%(refname)%09%(objectname)%09%(upstream:short)%09"
             + "%(upstream:track,nobracket)%09%(HEAD)%09%(creatordate:unix)";
 
-    public static List<BranchInfo> branches(Path repo) {
+    /**
+     * 一次 for-each-ref 同时拿到「分支列表 + 引用指纹」。
+     *
+     * 这两样本来各起一个进程(都是 for-each-ref),而 Windows 上每个 git 进程本身就要
+     * 100~200ms —— 刷新一次省一个进程就省一次肉眼可见的等待。指纹按
+     * {@code "<objectname> <refname>"} 逐行拼出,与 {@link #refsFingerprint} 的输出一致,
+     * 这样界面里"这次刷新算出的指纹"才能和轮询里的指纹直接比较
+     * (两边格式不一致会导致每 5 秒白重载一次历史)。
+     */
+    public record RefSnapshot(List<BranchInfo> branches, String fingerprint) {}
+
+    public static RefSnapshot refSnapshot(Path repo) {
         GitProcess.GitResult r = GitProcess.in(repo).exec(
                 "for-each-ref", "--format=" + REF_FORMAT,
                 "refs/heads", "refs/remotes", "refs/tags");
         if (!r.ok()) throw new GitException("读取分支列表失败:\n" + r.message());
         List<BranchInfo> list = new ArrayList<>();
+        StringBuilder fp = new StringBuilder();
         for (String line : r.out().split("\n")) {
             if (line.isBlank()) continue;
             String[] t = line.split("\t", -1);
             if (t.length < 6) continue;
             String full = t[0];
             String tip = t[1];
+            // 指纹先记:便利引用(refs/remotes/*/HEAD)不进列表,但它在 git 眼里是一个引用,
+            // 少了它指纹就和 refsFingerprint 对不上
+            fp.append(tip).append(' ').append(full).append('\n');
             String upstream = t[2].isEmpty() ? null : t[2];
             String track = t[3];
             boolean current = t[4].contains("*");
@@ -142,7 +157,11 @@ public final class NativeGit {
                 list.add(new BranchInfo(BranchInfo.Kind.TAG, full.substring(10), full, tip, false, null, "", time));
             }
         }
-        return list;
+        return new RefSnapshot(list, fp.toString());
+    }
+
+    public static List<BranchInfo> branches(Path repo) {
+        return refSnapshot(repo).branches();
     }
 
     public static Map<String, String> remotes(Path repo) {
@@ -735,15 +754,18 @@ public final class NativeGit {
 
     /** 当前分支尚未推送到上游的提交 SHA 集合(无上游/失败时为空集)。 */
     public static java.util.Set<String> unpushedShas(Path repo, int max) {
-        try {
-            GitProcess.GitResult up = GitProcess.in(repo).exec("rev-parse", "--abbrev-ref",
-                    "--symbolic-full-name", "@{upstream}");
-            if (up.ok() && !up.out().isBlank()) {
-                return java.util.Set.copyOf(revListShas(repo, up.out().strip() + "..HEAD", max));
-            }
-        } catch (Exception ignored) {
+        // 一个进程搞定:有上游就直接列 @{upstream}..HEAD;没有上游时该 revspec 直接报错,
+        // 正好当作空集返回。原来是先 rev-parse 查上游再 rev-list,白起一个进程
+        // (Windows 上 git 进程启动就要 100~200ms,刷新里省一个就省一次等待)。
+        GitProcess.GitResult r = GitProcess.in(repo)
+                .exec("rev-list", "--max-count=" + max, "@{upstream}..HEAD");
+        if (!r.ok()) return java.util.Set.of();
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (String line : r.out().split("\n")) {
+            String s = line.strip();
+            if (!s.isEmpty()) out.add(s);
         }
-        return java.util.Set.of();
+        return java.util.Set.copyOf(out);
     }
 
     // ---------- git config ----------

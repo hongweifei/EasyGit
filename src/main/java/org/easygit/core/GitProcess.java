@@ -40,6 +40,19 @@ public final class GitProcess {
      */
     private static final Duration NET_TIMEOUT = Duration.ofMinutes(5);
 
+    /**
+     * 累计 spawn 的 git 子进程数(性能诊断)。
+     *
+     * Windows 上 git 进程启动本身就要 100~200ms,刷新耗时基本由"起了几个进程"决定,
+     * 所以优化刷新必须先能数清进程数。与 {@code Fx.scheduledTasks()} 同类的诊断计数,
+     * 只给探针/排查用,不参与任何业务判断。
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger EXEC_COUNT =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** 累计已 spawn 的 git 子进程数(诊断)。 */
+    public static int execCount() { return EXEC_COUNT.get(); }
+
     /** 是否配置了 core.sshCommand(配置了就不覆盖用户的 ssh 命令)。 */
     private static final Map<String, Boolean> SSH_CMD_CONFIGURED = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -87,6 +100,7 @@ public final class GitProcess {
         StringBuilder err = new StringBuilder();
         Process p = null;
         try {
+            EXEC_COUNT.incrementAndGet();
             p = pb.start();
             // 子进程 stdin 立刻收到 EOF:任何"读一行输入"的提示都会立即失败而不是永久阻塞。
             // (GUI 里没有终端,这是"拉取后界面卡住"那类问题的根因之一)
