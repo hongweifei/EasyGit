@@ -414,6 +414,9 @@ public class MainWindow {
             statusBar.updateCounts(0, 0, 0, 0);
             statusBar.updateLfs(false, 0);
             Fx.status("已切换到 " + repoName);
+            // 看过的仓库:先用上次的快照把界面填上(stale-while-revalidate),
+            // 不用再等 status + for-each-ref 两个进程(实测 350~500ms);后台刷新一到就替换
+            paintSnapshot(repo, repoName);
         }
 
         boolean allBranches = historyPanel.allBranchesSelected();
@@ -436,23 +439,8 @@ public class MainWindow {
         }, data -> {
             refreshingEpoch = -1;
             if (data == null) return;
-            // 整仓刷新已经重载过历史,顺手把指纹对齐,免得下一拍轮询再白刷一次
-            lastRefsFingerprint = data.refs;
-            currentStatus = data.status;
-            snapshotBranches = data.branches;
-            changesPanel.refresh(data.status);
-            branchPanel.refresh(data.branches);
-
-            int staged = 0, unstaged = 0, untracked = 0, conflicts = 0;
-            for (var f : data.status.changes()) {
-                if (f.unmerged) conflicts++;
-                else if (f.untracked) untracked++;
-                if (f.indexState != ' ' && f.indexState != '?') staged++;
-                if (!f.untracked && !f.unmerged && f.wtState != ' ') unstaged++;
-            }
-            statusBar.updateRepo(repo.toString(), data.status.branch(), data.status.detached(),
-                    data.status.ahead(), data.status.behind());
-            statusBar.updateCounts(staged, unstaged, untracked, conflicts);
+            applyStatus(repo, data.status, data.branches, data.refs);
+            rememberSnapshot(repo, data.status, data.branches, data.refs);
         });
 
         // 阶段一之三:LFS 状态单独一个任务。
@@ -548,6 +536,9 @@ public class MainWindow {
             }
             currentStatus = data.st();
             changesPanel.refresh(data.st());
+            // 轮询这条路径也要记快照:启动时仓库会被再选一次(旧 guard 作废、首屏整仓刷新的回调被丢弃),
+            // 界面上的数据其实来自轮询 —— 只在那里记快照的话,切回来就"没东西可先显示"(实测两次挂一次)
+            rememberSnapshot(repo, data.st(), snapshotBranches, data.refs());
             int staged = 0, unstaged = 0, untracked = 0, conflicts = 0;
             for (var f : data.st().changes()) {
                 if (f.unmerged) conflicts++;
@@ -578,6 +569,56 @@ public class MainWindow {
     }
 
     private record RefreshData(StatusResult status, List<BranchInfo> branches, String refs) {}
+
+    /** 一个仓库最近一次的「阶段一」数据(状态 + 分支 + 引用指纹)。 */
+    private record Snapshot(StatusResult status, List<BranchInfo> branches, String refs) {}
+
+    /** 记住的仓库快照(按最近使用排序,超过上限丢最旧的):切回时先上屏用。 */
+    private final java.util.LinkedHashMap<String, Snapshot> snapshots =
+            new java.util.LinkedHashMap<>(16, 0.75f, true);
+    private static final int SNAPSHOT_MAX = 8;
+
+    /**
+     * 把一份「阶段一」数据套到界面上(新取的或上次缓存的都走这里)。
+     * 计数口径只写一处,免得缓存路径和新数据路径对不上。
+     */
+    private void applyStatus(Path repo, StatusResult st, List<BranchInfo> branches, String refs) {
+        lastRefsFingerprint = refs;
+        currentStatus = st;
+        snapshotBranches = branches;
+        changesPanel.refresh(st);
+        branchPanel.refresh(branches);
+
+        int staged = 0, unstaged = 0, untracked = 0, conflicts = 0;
+        for (var f : st.changes()) {
+            if (f.unmerged) conflicts++;
+            else if (f.untracked) untracked++;
+            if (f.indexState != ' ' && f.indexState != '?') staged++;
+            if (!f.untracked && !f.unmerged && f.wtState != ' ') unstaged++;
+        }
+        statusBar.updateRepo(repo.toString(), st.branch(), st.detached(), st.ahead(), st.behind());
+        statusBar.updateCounts(staged, unstaged, untracked, conflicts);
+    }
+
+    /**
+     * 切回看过的仓库:先用上次快照把界面填上(stale-while-revalidate)。
+     *
+     * 这样切仓的感知延迟从「等两个 git 进程(350~500ms)」降到「立刻可见」,
+     * 后台刷新一到就替换成最新值;指纹也一并对齐,轮询能照常发现离开期间的变化。
+     */
+    private void paintSnapshot(Path repo, String repoName) {
+        Snapshot snap = snapshots.get(repo.toString());
+        if (snap == null) return;
+        applyStatus(repo, snap.status(), snap.branches(), snap.refs());
+        Fx.status("已切换到 " + repoName + "(先显示上次快照,正在刷新…)");
+    }
+
+    private void rememberSnapshot(Path repo, StatusResult st, List<BranchInfo> branches, String refs) {
+        snapshots.put(repo.toString(), new Snapshot(st, branches, refs));
+        while (snapshots.size() > SNAPSHOT_MAX) {
+            snapshots.remove(snapshots.keySet().iterator().next());
+        }
+    }
 
     private record HistoryData(List<CommitEntry> log, java.util.Set<String> unpushed) {}
 
