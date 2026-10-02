@@ -163,6 +163,22 @@ GUI 没有终端,git 一旦等 stdin 输入就**永久挂起**——界面表现
 (`changesPanel.onRepoSwitched()` / `historyPanel.onRepoSwitched()` 等)。新增面板如果有
 "属于某个仓库的缓存状态",必须在这条清场链上挂一个 `onRepoSwitched()`。
 
+### 五之二、错误提示必须 fail-safe(2026-10-02)
+
+`Fx.error/info/confirm` 全部包了 try/catch,建不出对话框就走 `Fx.dialogFallback`:
+把标题/消息/详情写进输出面板与状态栏,**绝不把真正的错误吞掉**;`confirm` 更必须 **fail-closed**
+(弹不出确认框一律当"取消",破坏性操作不能放行);`dialogFallback` 自身也不许抛
+(连 `Platform.runLater` 在无工具包时都会抛)。
+
+由来:实例 **fat jar 在运行中被替换** → JVM 懒加载 `javafx/scene/control/Alert$1` 按旧偏移读到新文件
+→ `NoClassDefFoundError` → 错误框建不起来,于是用户只看到「界面更新失败: javafx/scene/control/Alert$1」,
+**原始报错全丢**。两条纪律:
+1. 显示错误的代码路径本身也要有兜底,否则"报告失败"会顶掉"失败原因";
+2. `reportUiFailure` 的输出**必须带异常类型**(`Fx.describe`),不然 `NoClassDefFoundError` 只剩一个类名,
+   看日志根本猜不出发生了什么。
+另外:部署脚本 `tools/deploy-jar.ps1` 会拒绝覆盖正在运行的 jar(见 README「运行」),
+这类"运行中换 jar"的故障不是应用 bug,是部署姿势问题。
+
 ## 六、数据加载路径:必须收敛到单一入口
 
 **同一个列表有两条加载路径时,后处理(构图/排序/标记)必须放在唯一的汇合点**,

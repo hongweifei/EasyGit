@@ -68,6 +68,15 @@ mvn package -DskipTests
 java -jar target/easygit-<版本>.jar     # Windows 用 target\easygit-<版本>.jar
 ```
 
+**不要把 fat jar 覆盖到"正在运行的实例"所用的那个文件上。** JVM 是懒加载类的:替换后它仍按 jar
+中央目录里的旧偏移去读新文件,之后任何"还没加载过的类"都可能报 `NoClassDefFoundError`
+(实测:运行中换掉桌面 jar 后,界面弹错误框时崩在 `javafx/scene/control/Alert$1`)。先关掉程序再覆盖。
+需要把构建产物部署到桌面时用:
+
+```powershell
+powershell -File tools\deploy-jar.ps1 -Build   # 构建 + 部署;检测到 EasyGit 在跑就拒绝覆盖
+```
+
 ## 打包桌面应用
 
 ```powershell
