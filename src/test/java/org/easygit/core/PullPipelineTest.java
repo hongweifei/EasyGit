@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,7 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * 覆盖:上游探测 / 快进不产生合并提交 / 分叉合并 / 分叉变基 / 冲突识别与中止 /
  * 本地改动挡住 → 暂存重试恢复 / 网络操作不挂死 / 中文报错归类。
+ *
+ * 类级 {@link Timeout} 用 SEPARATE_THREAD:这些用例会真的起 git 子进程,
+ * 万一哪个命令退化成"等 stdin/等编辑器",必须在 120 秒内变红而不是挂死构建。
  */
+@Timeout(value = 120, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 class PullPipelineTest {
 
     private Path base, origin, work, other;

@@ -26,8 +26,8 @@ core/* ──→  core/model/*  (数据结构独立,谁都可以用)
 
 | 包 | 放什么 | 现状 |
 | --- | --- | --- |
-| `core/` | git 调用、解析器、算法、设置、仓库管理 | `NativeGit` `JGitService` `GitProcess` `LfsService` `GraphBuilder` `RepoManager` `AppSettings` `*Parser` |
-| `core/model/` | 纯数据结构,无行为或只有极轻的格式化 | `CommitEntry` `BranchInfo` `FileChange` `DiffModels` `PullPlan` |
+| `core/` | git 调用、解析器、算法、设置、仓库管理 | `NativeGit` `JGitService` `GitProcess` `LfsService` `GraphBuilder` `RepoManager` `AppSettings` `ConflictIO` `*Parser` |
+| `core/model/` | 纯数据结构,无行为或只有极轻的格式化 | `CommitEntry` `BranchInfo` `FileChange` `DiffModels` `PullPlan` `PushPlan` `MergeState` |
 | `ui/base/` | 跨面板的基础件(所有面板都会用到) | `Fx`(后台任务/提示) `StatusBar` `UiLog` `RepoGuard` `HeaderBar` `WelcomeView` |
 | `ui/panels/` | 有业务语义的面板与流程编排 | `ChangesPanel` `HistoryPanel` `BranchPanel` `RepoPanel` `StashPanel` `OutputPanel` `CommitDetailPanel` `PullFlow` |
 | `ui/views/` | **纯展示**组件:给数据就渲染,不自己取数 | `DiffView` `BlameView` |
@@ -63,6 +63,24 @@ GUI 没有终端,git 一旦等 stdin 输入就**永久挂起**——界面表现
 
 新增网络命令一律用 `GitProcess.execNet(...)`,不要用 `exec(...)`。
 
+### 四之二、冲突处理的三条硬性不变量
+
+1. **继续多步操作必须压制编辑器**。`git rebase --continue` / `cherry-pick --continue` /
+   `revert --continue` 都会拉起 `core.editor` 让用户确认提交说明;GUI 没有终端,
+   实际表现是 `error: there was a problem with the editor 'nano.exe'`(用户机器上配的是什么编辑器就报它)
+   或干脆等到超时。统一写成 `-c core.editor=true <cmd> --continue`:
+   ```java
+   GitProcess.in(repo).exec("-c", "core.editor=true", "rebase", "--continue");
+   ```
+   合并例外:用 `git commit --no-edit`,git 已把默认说明写进 `.git/MERGE_MSG`。
+   回归由 `MergeStateTest` 兜住(类级 `@Timeout(SEPARATE_THREAD)`,退化必红而不是挂死构建)。
+2. **解决冲突时文件的编码/BOM/换行必须原样保留**。读写一律走 `ConflictIO`:
+   `Files.readAllLines` + `Files.writeString(UTF-8)` 会把 CRLF 文件整份改成 LF、
+   把 GBK 文件读成乱码再毁掉。没让用户改的部分,一个字节都不该变。
+3. **冲突标记检查必须在 `git add` 之前**。`git add` 会把"还带着 `<<<<<<<` 的文件"
+   也记成已解决,所以 add 之后再查 `status.unmerged` 永远为假(曾经就是一段死代码);
+   要在 add 之前按文件内容扫(`ConflictParser.hasMarkers`)。
+
 ## 五、异步与仓库切换
 
 界面取数**只能**通过 `Fx.bg(...)` 家族:
@@ -88,6 +106,9 @@ GUI 没有终端,git 一旦等 stdin 输入就**永久挂起**——界面表现
   - `ParsersTest` — 各解析器
   - `GraphBuilderTest` — 泳道图不变量(逐行"上行底边 == 下行顶边"、槽位复用)
   - `PullPipelineTest` — 真实临时仓库跑拉取分流/冲突/暂存重试/中文报错
+  - `PushPipelineTest` — 推送前置探测/步进计数/强制推送与拒绝识别
+  - `MergeStateTest` — 合并/变基/拣选的识别与 继续/跳过/中止(真实临时仓库)
+  - `ConflictParserTest` / `ConflictIOTest` — 冲突标记解析与编码/换行保真
   - `CoreSmokeTest` — 全链路冒烟
 - **界面/像素/布局**确实需要真实 JavaFX 的,才用探针(`target/harness/`,已被 gitignore)。
 - **每个新修复都要有会红的测试**:先写/改测试证明当前是坏的,再修。必要时做**负对照**

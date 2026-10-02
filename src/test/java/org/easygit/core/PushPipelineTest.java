@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,7 +19,11 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * 覆盖:前置探测(同步/仅领先/分叉/无上游)/ 推送步进与计数 / 设置上游 /
  * 非快进被拒与强制推送 / 中文报错归类。
+ *
+ * 类级 {@link Timeout} 用 SEPARATE_THREAD:用例会真的起 git 子进程,
+ * 退化成"等 stdin"时必须变红而不是把构建挂住(远程交互类回归就踩过)。
  */
+@Timeout(value = 120, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 class PushPipelineTest {
 
     private Path base, origin, work, other;
