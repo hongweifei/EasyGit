@@ -326,6 +326,23 @@ public final class NativeGit {
                 || low.contains("please commit your changes")) {
             return "本地未提交的改动会被覆盖,git 拒绝了本次拉取。\n可先提交,或让 EasyGit 暂存改动后重试。";
         }
+        if (low.contains("stale info")) {
+            return "本地对远端的记录已过期(别人可能已推送),git 拒绝了这次强制推送。\n"
+                    + "先「抓取」刷新远端状态,再重新推送。";
+        }
+        if (low.contains("[rejected]") || low.contains("non-fast-forward")
+                || low.contains("fetch first") || low.contains("behind its remote counterpart")) {
+            return "推送被拒绝:远端已有别人推送的新提交,直接覆盖会丢掉他们的提交。\n"
+                    + "建议先「拉取」合并后再推送;确实要覆盖远端时,用推送对话框里的强制推送(--force-with-lease)。";
+        }
+        if (low.contains("pre-receive hook declined") || low.contains("hook declined")) {
+            return "远端服务器的钩子(hook)拒绝了这次推送。\n"
+                    + "通常是分支保护规则或代码检查没通过,详情见远端平台的说明。";
+        }
+        if (low.contains("protected branch") || low.contains("not permitted")
+                || low.contains("permission to") || low.contains("insufficient permission")) {
+            return "没有推送权限(分支受保护或账号受限)。\n到远端平台确认分支保护规则与你账号的权限。";
+        }
         if (low.contains("not possible to fast-forward") || low.contains("non-fast-forward")
                 || low.contains("divergent branches") || low.contains("have diverged")) {
             return "本地与远端各有新提交(已分叉),不能快进。\n用「合并拉取」或「变基拉取」都可以继续。";
@@ -403,6 +420,60 @@ public final class NativeGit {
         args.add(remote);
         args.add(branch);
         return GitProcess.in(repo).execNet(args.toArray(String[]::new));
+    }
+
+    // ---------- 推送流程的数据类型与编排(与界面无关,可无头测试) ----------
+
+    /** 推送那一步的结果(pushed = 这次实际推上去的提交数,取不到为 -1)。 */
+    public record PushStep(GitProcess.GitResult result, int pushed) {}
+
+    /** 指定分支的上游(如 origin/main);未设置返回 null。与 HEAD 无关,任意分支都能查。 */
+    public static String upstreamOf(Path repo, String branch) {
+        GitProcess.GitResult r = GitProcess.in(repo)
+                .exec("rev-parse", "--abbrev-ref", "--symbolic-full-name", branch + "@{u}");
+        if (!r.ok()) return null;
+        String s = r.out().strip();
+        return s.isEmpty() || s.contains("@{u}") ? null : s;
+    }
+
+    /** 指定分支相对其上游的提交数,返回 {领先, 落后}。取不到时返回 {0,0}。 */
+    public static int[] aheadBehindOf(Path repo, String branch, String upstream) {
+        GitProcess.GitResult r = GitProcess.in(repo)
+                .exec("rev-list", "--count", "--left-right", upstream + "..." + branch);
+        if (!r.ok()) return new int[]{0, 0};
+        String[] t = r.out().strip().split("\\s+");
+        if (t.length < 2) return new int[]{0, 0};
+        try {
+            return new int[]{Integer.parseInt(t[1]), Integer.parseInt(t[0])};
+        } catch (NumberFormatException e) {
+            return new int[]{0, 0};
+        }
+    }
+
+    /** 推送前置探测:分支相对上游的领先/落后(基于上次 fetch 的本地引用,无网络操作)。 */
+    public static org.easygit.core.model.PushPlan pushPlan(Path repo, String branch) {
+        String up = upstreamOf(repo, branch);
+        if (up == null) return new org.easygit.core.model.PushPlan(branch, null, 0, 0);
+        int[] ab = aheadBehindOf(repo, branch, up);
+        return new org.easygit.core.model.PushPlan(branch, up, ab[0], ab[1]);
+    }
+
+    /** 跑一步推送,顺便量出这次实际推上去的提交数。 */
+    public static PushStep runPushStep(Path repo, String branch, String remote,
+                                       boolean setUpstream, boolean force) {
+        GitProcess.GitResult up = GitProcess.in(repo)
+                .exec("rev-parse", "--verify", "--quiet", branch + "@{u}");
+        String oldUp = up.ok() ? up.out().strip() : null;
+        GitProcess.GitResult r = pushTo(repo, branch, remote, setUpstream, force);
+        int pushed = r.ok() ? (oldUp == null ? 0 : countRange(repo, oldUp + ".." + branch)) : -1;
+        return new PushStep(r, pushed);
+    }
+
+    /** 推送被远端拒绝(非快进:远端有别人推的新提交)。注意凭据类失败没有这些标记。 */
+    public static boolean isPushRejected(String message) {
+        String m = lower(message);
+        return m.contains("[rejected]") || m.contains("non-fast-forward")
+                || m.contains("fetch first") || m.contains("behind its remote counterpart");
     }
 
     /**
