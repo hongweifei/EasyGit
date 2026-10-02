@@ -1,12 +1,14 @@
 package org.easygit.ui.dialogs;
 
-import org.easygit.core.JGitService;
+import org.easygit.core.ConflictIO;
+import org.easygit.core.ConflictParser;
+import org.easygit.core.NativeGit;
+import org.easygit.core.RepoManager;
 import org.easygit.core.model.ConflictModels.ConflictFile;
 import org.easygit.core.model.ConflictModels.ConflictRegion;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -17,8 +19,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,18 +29,26 @@ import org.easygit.ui.base.Fx;
 /**
  * 合并冲突解决对话框:
  * 每个冲突块可选择 采用当前(HEAD)/ 采用传入 / 两者都保留,实时预览,保存后自动 git add。
+ *
+ * 写回时按原文件的编码/BOM/换行风格({@link ConflictIO}),并且没让改的部分一个字节都不动 ——
+ * 之前的实现统一按 UTF-8 + LF 重写整个文件,CRLF 文件解决一个冲突块就整篇变红,
+ * GBK 文件更是直接被毁掉。
  */
 public class ConflictDialog extends Dialog<Void> {
 
     private final ConflictFile cf;
+    private final ConflictIO.Content content;
+    private final Path file;
     private final Runnable refreshAll;
     private final ListView<ConflictRegion> regionList = new ListView<>();
     private final TextArea preview = new TextArea();
-    private final Map<ConflictRegion, String> strategy = new HashMap<>(); // ours/theirs/both/null=保留标记
+    private final Map<ConflictRegion, String> strategy = new HashMap<>(); // ours/theirs/both/base/null=保留标记
     private Label resolvedLabel;
 
-    public ConflictDialog(ConflictFile cf, Runnable refreshAll) {
+    public ConflictDialog(ConflictFile cf, ConflictIO.Content content, Path file, Runnable refreshAll) {
         this.cf = cf;
+        this.content = content;
+        this.file = file;
         this.refreshAll = refreshAll;
 
         setTitle("解决冲突");
@@ -81,6 +89,10 @@ public class ConflictDialog extends Dialog<Void> {
         baseBtn.setOnAction(e -> applyToSelected("base"));
         Button resetBtn = new Button("保留冲突标记");
         resetBtn.setOnAction(e -> applyToSelected(null));
+        Button prevBtn = new Button("上一处");
+        prevBtn.setOnAction(e -> stepRegion(-1));
+        Button nextBtn = new Button("下一处");
+        nextBtn.setOnAction(e -> stepRegion(1));
 
         Button allOurs = new Button("全部采用当前");
         allOurs.setOnAction(e -> {
@@ -96,12 +108,11 @@ public class ConflictDialog extends Dialog<Void> {
         HBox.setHgrow(spacer, Priority.ALWAYS);
         resolvedLabel = new Label();
         HBox allBar = new HBox(8, allOurs, allTheirs, spacer, resolvedLabel);
-        HBox regionBar = new HBox(8, oursBtn, theirsBtn, baseBtn, bothBtn, resetBtn);
+        HBox regionBar = new HBox(8, oursBtn, theirsBtn, baseBtn, bothBtn, resetBtn, prevBtn, nextBtn);
         regionBar.setPadding(new Insets(4, 0, 4, 0));
 
         preview.setPrefRowCount(18);
         preview.setFont(javafx.scene.text.Font.font("Consolas", 13));
-        preview.textProperty().addListener((o, ov, nv) -> { /* 可手工编辑 */ });
         refresh();
 
         Button save = new Button("保存并标记已解决");
@@ -125,6 +136,16 @@ public class ConflictDialog extends Dialog<Void> {
 
     private static Region spacer2() { return new Region(); }
 
+    /** 在冲突块之间跳转(多块时不用在长文件里翻)。 */
+    private void stepRegion(int delta) {
+        int n = cf.regions.size();
+        if (n == 0) return;
+        int i = regionList.getSelectionModel().getSelectedIndex();
+        int next = i < 0 ? (delta > 0 ? 0 : n - 1) : Math.floorMod(i + delta, n);
+        regionList.getSelectionModel().select(next);
+        regionList.scrollTo(next);
+    }
+
     private void applyToSelected(String s) {
         ConflictRegion r = regionList.getSelectionModel().getSelectedItem();
         if (r == null) return;
@@ -138,72 +159,36 @@ public class ConflictDialog extends Dialog<Void> {
         List<String> lines = buildResolved();
         preview.setText(String.join("\n", lines));
         long done = strategy.size();
-        resolvedLabel.setText("已解决 " + done + "/" + cf.regions.size());
+        resolvedLabel.setText("已解决 " + done + "/" + cf.regions.size()
+                + (ConflictParser.hasMarkers(lines) ? "   ⚠ 仍有冲突标记" : "   ✓ 无冲突标记"));
     }
 
+    /** 逐块按已选策略生成文件内容(未选的块原样保留标记行,含引用名)。 */
     private List<String> buildResolved() {
-        List<Integer> resolvedIdx = new ArrayList<>();
-        List<String> strategies = new ArrayList<>();
-        for (int i = 0; i < cf.regions.size(); i++) {
-            String s = strategy.get(cf.regions.get(i));
-            if (s != null) {
-                resolvedIdx.add(i);
-                strategies.add(s);
-            }
-        }
-        // ConflictParser.resolve 用单一策略;逐块应用需要自定义
-        List<String> out = new ArrayList<>();
-        int idx = 0;
-        for (int i = 0; i < cf.lines.size(); i++) {
-            String line = cf.lines.get(i);
-            if (idx < cf.regions.size() && i == cf.regions.get(idx).startLine - 1) {
-                ConflictRegion r = cf.regions.get(idx);
-                String s = strategy.get(r);
-                if (s != null) {
-                    switch (s) {
-                        case "ours" -> out.addAll(r.ours);
-                        case "theirs" -> out.addAll(r.theirs);
-                        case "base" -> out.addAll(r.base);
-                        case "both" -> { out.addAll(r.ours); out.addAll(r.theirs); }
-                    }
-                } else {
-                    out.add("<<<<<<<");
-                    out.addAll(r.ours);
-                    if (!r.base.isEmpty()) {
-                        out.add("|||||||");
-                        out.addAll(r.base);
-                    }
-                    out.add("=======");
-                    out.addAll(r.theirs);
-                    out.add(">>>>>>>");
-                }
-                int skip = 1 + r.ours.size() + (r.base.isEmpty() ? 0 : r.base.size() + 1)
-                        + 1 + r.theirs.size() + 1;
-                i += skip - 1;
-                idx++;
-                continue;
-            }
-            out.add(line);
-        }
+        return ConflictParser.resolve(cf, (idx, r) -> strategy.get(r));
+    }
+
+    /** 预览框里的内容(用户可能手工改过)。 */
+    private List<String> previewLines() {
+        String t = preview.getText();
+        List<String> out = new ArrayList<>(List.of(t.split("\n", -1)));
+        if (t.endsWith("\n")) out.remove(out.size() - 1);
         return out;
     }
 
     private void save() {
-        int unresolved = 0;
-        for (ConflictRegion r : cf.regions) {
-            if (strategy.get(r) == null) unresolved++;
-        }
-        if (unresolved > 0 && !Fx.confirm("仍有未处理冲突",
-                "还有 " + unresolved + " 处冲突保留标记,确定以当前内容保存并标记已解决?")) {
+        List<String> lines = previewLines();
+        if (ConflictParser.hasMarkers(lines) && !Fx.confirm("仍有未处理的冲突",
+                "预览内容里还留着冲突标记,确定以当前内容保存并标记已解决?")) {
             return;
         }
+        Path repo = RepoManager.get().current();
+        if (repo == null) return;
         try {
-            Path p = org.easygit.core.RepoManager.get().current().resolve(cf.path);
-            String content = preview.getText();
-            // 统一换行为 \n;git 会按配置处理
-            if (!content.endsWith("\n")) content += "\n";
-            Files.writeString(p, content, StandardCharsets.UTF_8);
-            new JGitService(org.easygit.core.RepoManager.get().current()).stage(List.of(cf.path));
+            // 编码/BOM/换行按原文件写回;然后走 CLI git add(LFS 过滤器安全,索引冲突阶段一并清掉)
+            ConflictIO.write(file, content, lines);
+            var r = NativeGit.markResolved(repo, List.of(cf.path));
+            if (!r.ok()) throw new RuntimeException(r.message());
             Fx.status("已解决冲突并暂存 " + cf.path);
             refreshAll.run();
             close();

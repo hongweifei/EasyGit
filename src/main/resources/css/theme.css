@@ -638,6 +638,28 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
     -fx-padding: 6 8 2 8;
 }
 
+/* ---------- 冲突 / 进行中操作横幅 ---------- */
+
+/* 合并在途、变基停在冲突上、或工作区里有冲突文件时,变更页顶部的一条提示带。
+   文字色必须直接命中 .label:Modena 对 .label 是直接匹配,写在父容器上只是继承值,
+   继承值输给直接匹配(见文件头"文字色"说明)。
+   进行中(琥珀)与"有冲突未解决"(红)两种状态:前者是进度提示,后者要显眼。 */
+.conflict-banner {
+    -fx-background-color: -amber-soft;
+    -fx-border-color: -amber;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 6 10 6 10;
+}
+.conflict-banner .label { -fx-text-fill: -fg; }
+.conflict-banner .conflict-title { -fx-font-weight: bold; -fx-text-fill: -amber; }
+.conflict-banner .conflict-detail { -fx-text-fill: -fg-dim; -fx-font-size: 11px; }
+.conflict-banner .button { -fx-padding: 2 10 2 10; }
+/* 有未解决冲突:整条换成红色警示(主按钮的底色仍是品牌青碧,不动) */
+.conflict-banner.has-conflicts { -fx-background-color: -red-soft; -fx-border-color: -red; }
+.conflict-banner.has-conflicts .conflict-title { -fx-text-fill: -red; }
+
 .welcome-title { -fx-font-size: 34px; -fx-font-weight: bold; -fx-text-fill: -accent; }
 .welcome-sub { -fx-font-size: 14px; -fx-text-fill: -fg-dim; }
 

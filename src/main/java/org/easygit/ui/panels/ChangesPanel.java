@@ -1,10 +1,14 @@
 package org.easygit.ui.panels;
 
+import org.easygit.core.ConflictIO;
+import org.easygit.core.ConflictParser;
 import org.easygit.core.GitProcess;
 import org.easygit.core.JGitService;
 import org.easygit.core.NativeGit;
 import org.easygit.core.StatusParser.StatusResult;
+import org.easygit.core.model.ConflictModels.ConflictFile;
 import org.easygit.core.model.FileChange;
+import org.easygit.core.model.MergeState;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -62,6 +66,18 @@ public class ChangesPanel extends VBox {
     /** 标记进"待提交"清单的路径(尚未真正 git add)。 */
     private final LinkedHashSet<String> toCommit = new LinkedHashSet<>();
     private StatusResult lastStatus;
+
+    // ---- 冲突 / 进行中操作横幅 ----
+    private final HBox conflictBanner = new HBox(8);
+    private final Label bannerTitle = new Label();
+    private final Label bannerDetail = new Label();
+    private final Button continueBtn = new Button();
+    private final Button skipBtn = new Button("跳过");
+    private final Button abortBtn = new Button("中止");
+    /** 当前进行中的合并/变基/拣选状态(刷新时读取,动作按钮据此给出)。 */
+    private MergeState mergeState = MergeState.NONE;
+    /** 自动填进提交框的合并默认说明:操作结束后要能收回去,别留一段过期文案。 */
+    private String autoFilledMsg;
 
     private final Runnable refreshAll;
     private final Consumer<String> blameOpener;
@@ -144,12 +160,35 @@ public class ChangesPanel extends VBox {
         footer.getStyleClass().add("commit-footer");
         footer.setAlignment(Pos.CENTER_LEFT);
 
+        // ---- 冲突 / 进行中操作横幅(默认隐藏,refresh 时按仓库状态决定) ----
+        bannerTitle.getStyleClass().add("conflict-title");
+        bannerDetail.getStyleClass().add("conflict-detail");
+        Region bannerSpacer = new Region();
+        HBox.setHgrow(bannerSpacer, Priority.ALWAYS);
+        continueBtn.getStyleClass().add("primary");
+        continueBtn.setOnAction(e -> continueOperation());
+        skipBtn.getStyleClass().add("ghost");
+        skipBtn.setOnAction(e -> skipOperation());
+        abortBtn.getStyleClass().add("ghost");
+        abortBtn.setOnAction(e -> abortOperation());
+        conflictBanner.getStyleClass().add("conflict-banner");
+        conflictBanner.setAlignment(Pos.CENTER_LEFT);
+        conflictBanner.getChildren().addAll(bannerTitle, bannerDetail, bannerSpacer,
+                continueBtn, skipBtn, abortBtn);
+        setBannerVisible(false);
+
         // 内容统一 12px 侧边距:分区头/清单/查看器全部对齐到同一基准线
-        VBox content = new VBox(0, hsplit);
+        VBox content = new VBox(0, conflictBanner, hsplit);
         content.setPadding(new Insets(0, 12, 0, 12));
+        VBox.setMargin(conflictBanner, new Insets(8, 0, 0, 0));
         VBox.setVgrow(content, Priority.ALWAYS);
 
         getChildren().addAll(content, footer);
+    }
+
+    private void setBannerVisible(boolean visible) {
+        conflictBanner.setVisible(visible);
+        conflictBanner.setManaged(visible);
     }
 
     private static Label sectionTitle(String text) {
@@ -220,11 +259,17 @@ public class ChangesPanel extends VBox {
         // (实测:悬停文件项约 2 秒后提示自己消失),也会丢选中、白白刷新整列。
         if (!sameItems(workList.getItems(), work)) workList.getItems().setAll(work);
         if (!sameItems(stagedList.getItems(), commitList)) stagedList.getItems().setAll(commitList);
-        long conflicts = st.changes().stream().filter(f -> f.unmerged).count();
+        int conflicts = (int) st.changes().stream().filter(f -> f.unmerged).count();
         workTitle.setText("未暂存(含未跟踪) (" + work.size() + ")"
                 + (conflicts > 0 ? "   ⚠ 冲突 " + conflicts : ""));
         stagedTitle.setText("待提交 (" + commitList.size() + ")");
         commitBtn.setDisable(commitList.isEmpty());
+
+        // 进行中的操作(合并/变基/拣选)决定横幅上给哪几个动作。
+        // 只读 .git 下的标记文件,不起子进程,放在 FX 线程上没有负担。
+        Path repoPath = repo();
+        mergeState = repoPath == null ? MergeState.NONE : NativeGit.mergeState(repoPath);
+        updateConflictBanner(conflicts);
 
         // 选中的文件已不存在时清空查看器
         if (selected != null) {
@@ -271,7 +316,135 @@ public class ChangesPanel extends VBox {
         selectSeq++; // 在途的旧文件/差异读取作废(守卫之外的二道保险)
         lastStatus = null; // 旧仓库的状态快照作废:重新分桶/"加入待提交"都不能再基于它
         toCommit.clear();
+        mergeState = MergeState.NONE;
+        autoFilledMsg = null;
+        setBannerVisible(false);
         diffView.clear();
+    }
+
+    // ---------- 冲突与进行中的操作(合并 / 变基 / 拣选) ----------
+
+    /**
+     * 刷新顶部横幅。
+     *
+     * 光把冲突文件列出来是不够的:变基停在冲突上时,用户解决完还必须「继续」,
+     * 否则剩下的提交永远放不完;而且这个状态在文件清单里完全看不出来。
+     * 横幅负责说清"什么操作进行到哪了、还剩几处冲突、下一步点哪里"。
+     */
+    private void updateConflictBanner(int conflicts) {
+        boolean show = mergeState.inProgress() || conflicts > 0;
+        setBannerVisible(show);
+        conflictBanner.getStyleClass().remove("has-conflicts");
+        if (conflicts > 0) conflictBanner.getStyleClass().add("has-conflicts");
+        if (!show) {
+            // 合并被中止/完成时,把自动填进去的默认说明一起收回,别留一段莫名其妙的文案
+            if (autoFilledMsg != null && autoFilledMsg.equals(msg.getText())) msg.clear();
+            autoFilledMsg = null;
+            return;
+        }
+        List<String> hints = new ArrayList<>();
+        String title;
+        if (mergeState.inProgress()) {
+            title = mergeState.kind().label() + "进行中";
+            String progress = mergeState.progressText();
+            if (!progress.isEmpty()) hints.add(progress);
+            if (!mergeState.detail().isBlank()) hints.add(mergeState.detail());
+        } else {
+            title = "有 " + conflicts + " 个文件存在冲突";
+        }
+        if (conflicts > 0) {
+            hints.add(mergeState.inProgress()
+                    ? "还有 " + conflicts + " 个文件未解决(双击文件解决)"
+                    : "双击文件逐个解决,全部解决后即可提交");
+        } else if (mergeState.inProgress()) {
+            hints.add("冲突已全部解决,可以继续");
+        }
+        bannerTitle.setText(title);
+        bannerDetail.setText(String.join(" · ", hints));
+
+        boolean busy = mergeState.inProgress();
+        String label = mergeState.kind().label();
+        continueBtn.setText("继续" + label);
+        continueBtn.setDisable(conflicts > 0);
+        continueBtn.setTooltip(conflicts > 0
+                ? Fx.tip("先把 " + conflicts + " 个冲突文件全部解决")
+                : Fx.tip("完成这次" + label + (mergeState.kind() == MergeState.Kind.MERGE
+                        ? "(用 git 备好的合并说明提交)" : "")));
+        showButton(continueBtn, busy);
+        showButton(skipBtn, busy && mergeState.canSkip());
+        skipBtn.setTooltip(Fx.tip("放弃当前提交的改动,继续变基剩下的部分"));
+        showButton(abortBtn, busy);
+
+        // 合并进行中:把 git 备好的默认说明填进提交框(用户自己敲过就不覆盖)
+        if (mergeState.kind() == MergeState.Kind.MERGE && !mergeState.message().isBlank()
+                && msg.getText().isBlank()) {
+            msg.setText(mergeState.message());
+            autoFilledMsg = mergeState.message();
+        }
+    }
+
+    private static void showButton(Button b, boolean visible) {
+        b.setVisible(visible);
+        b.setManaged(visible);
+    }
+
+    /** 「继续」:合并走 commit --no-edit,变基/拣选走 continue(已压制编辑器)。 */
+    private void continueOperation() {
+        Path repo = repo();
+        if (repo == null) return;
+        String name = mergeState.kind().label();
+        Fx.bg("继续" + name + "…", () -> NativeGit.continueInProgress(repo), r -> {
+            UiLog.op("git " + name + " --continue" + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
+            if (r.ok()) {
+                Fx.status(name + "完成");
+            } else if (NativeGit.unmergedCount(repo) > 0) {
+                // 继续路上又撞上新的冲突:git 用非 0 退出码表示"停住了",这不是失败
+                Fx.status(name + "又遇到新的冲突,解决后继续");
+            } else {
+                Fx.error("继续" + name + "失败", NativeGit.friendlyError(r.message()), r.message());
+            }
+            refreshAll.run();
+        });
+    }
+
+    /** 「跳过」:只有变基有这回事,丢的是当前这个提交的改动,必须先确认。 */
+    private void skipOperation() {
+        Path repo = repo();
+        if (repo == null) return;
+        if (!Fx.confirm("跳过当前提交",
+                "这个提交的改动会被丢弃,然后继续变基剩下的提交。\n\n只有确实不需要它时才跳过。")) {
+            return;
+        }
+        Fx.bg("跳过当前提交…", () -> NativeGit.skipInProgress(repo), r -> {
+            UiLog.op("git rebase --skip" + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
+            if (r.ok()) {
+                Fx.status("已跳过,变基继续");
+            } else if (NativeGit.unmergedCount(repo) > 0) {
+                Fx.status("已跳过,下一个提交又冲突了");
+            } else {
+                Fx.error("跳过失败", NativeGit.friendlyError(r.message()), r.message());
+            }
+            refreshAll.run();
+        });
+    }
+
+    /** 「中止」:恢复操作前的状态。文件清单里的冲突行右键也走这里,文案只有一处。 */
+    private void abortOperation() {
+        Path repo = repo();
+        if (repo == null) return;
+        MergeState st = mergeState;
+        String what = st.kind().inProgress() ? st.kind().label() : "合并";
+        String extra = st.kind() == MergeState.Kind.REBASE
+                ? "\n\n变基会退回已重放的提交,回到变基前的状态。" : "";
+        if (!Fx.confirm("中止" + what, "确定中止进行中的" + what + ",恢复到操作前的状态?" + extra)) {
+            return;
+        }
+        Fx.bg("中止" + what + "…", () -> NativeGit.abortInProgress(repo), r -> {
+            UiLog.op("git " + what + " --abort" + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
+            Fx.status(r.ok() ? "已中止" + what + ",恢复原状"
+                    : "中止失败:" + NativeGit.friendlyError(r.message()));
+            refreshAll.run();
+        });
     }
 
     // ---------- 加入 / 移出待提交 ----------
@@ -401,9 +574,10 @@ public class ChangesPanel extends VBox {
         }
         // 差异视图
         if (f.unmerged) {
+            // 用 ConflictIO 读:GBK 文件按 UTF-8 读会整篇乱码,CRLF 也不该在查看时就丢掉
             Fx.bg("读取冲突文件…", guard, () -> {
                 try {
-                    return Files.readAllLines(repo.resolve(f.path));
+                    return ConflictIO.read(repo.resolve(f.path)).lines();
                 } catch (Exception ex) {
                     return List.of("(无法读取: " + ex.getMessage() + ")");
                 }
@@ -446,22 +620,34 @@ public class ChangesPanel extends VBox {
         if (repo == null) return;
 
         Fx.bg("提交中…", () -> {
-            // 1. 把标记的文件统一暂存(CLI:LFS 安全,且能标记冲突已解决)
+            // 1. 冲突标记兜底:git add 会把"还带着 <<<<<<< 的文件"也当成已解决记进索引,
+            //    所以必须在 add **之前**按文件内容判断,否则标记会被原样提交上去。
+            //    (原来这里是在 add 之后查 status.unmerged —— 那一刻冲突早已被 add 清掉,永远不触发)
             if (!toAdd.isEmpty()) {
+                List<String> unmerged = NativeGit.unmergedPaths(repo);
+                List<String> stillMarked = new ArrayList<>();
+                for (String p : toAdd) {
+                    if (!unmerged.contains(p)) continue;
+                    Path f = repo.resolve(p);
+                    if (!Files.isRegularFile(f)) continue;   // 用"删除文件"解决的冲突
+                    try {
+                        if (ConflictParser.hasMarkers(ConflictIO.read(f).lines())) stillMarked.add(p);
+                    } catch (Exception ignored) {
+                        // 读不动就不拦(交给 git 自己判断),不能因为一个怪文件让提交彻底不可用
+                    }
+                }
+                if (!stillMarked.isEmpty()) {
+                    throw new RuntimeException("这些文件里还留着冲突标记,请先解决再提交:\n"
+                            + String.join("\n", stillMarked));
+                }
+                // 2. 把标记的文件统一暂存(CLI:LFS 安全,且能标记冲突已解决)
                 List<String> args = new ArrayList<>(List.of("add", "--"));
                 args.addAll(toAdd);
                 GitProcess.GitResult ar = GitProcess.in(repo).exec(args.toArray(String[]::new));
                 UiLog.op("git add (" + toAdd.size() + " 个文件)", ar.out(), ar.err());
                 if (!ar.ok()) throw new RuntimeException("暂存失败:\n" + ar.message());
-                // 冲突必须全部解决后才能提交
-                StatusResult st = NativeGit.status(repo);
-                boolean unresolved = st.changes().stream()
-                        .anyMatch(fc -> fc.unmerged && toAdd.contains(fc.path));
-                if (unresolved) {
-                    throw new RuntimeException("仍有未解决的冲突(文件中还有冲突标记),请先双击文件解决");
-                }
             }
-            // 2. 提交(CLI:钩子/输出可见)
+            // 3. 提交(CLI:钩子/输出可见);若正处于合并中,这次提交即完成合并
             List<String> args = new ArrayList<>(List.of("commit", "-m", message.strip()));
             GitProcess.GitResult r = GitProcess.in(repo).exec(args.toArray(String[]::new));
             UiLog.op("git commit", r.out(), r.err());
@@ -526,16 +712,18 @@ public class ChangesPanel extends VBox {
     // ---------- 冲突 ----------
 
     private void openConflictDialog(FileChange f) {
-        Path p = repo().resolve(f.path);
+        Path repoPath = repo();
+        if (repoPath == null) return;
+        Path p = repoPath.resolve(f.path);
         try {
-            List<String> lines = Files.readAllLines(p);
-            org.easygit.core.model.ConflictModels.ConflictFile cf =
-                    org.easygit.core.ConflictParser.parse(f.path, lines);
+            // 读文件时就把编码/BOM/换行风格一起带出来,保存时原样写回
+            ConflictIO.Content content = ConflictIO.read(p);
+            ConflictFile cf = ConflictParser.parse(f.path, content.lines());
             if (!cf.hasConflicts()) {
                 Fx.info("无冲突标记", "文件中没有冲突标记,可直接加入待提交。");
                 return;
             }
-            new ConflictDialog(cf, refreshAll).showAndWait();
+            new ConflictDialog(cf, content, p, refreshAll).showAndWait();
         } catch (Exception ex) {
             Fx.error("打开冲突文件失败", ex.getMessage(), null);
         }
@@ -595,17 +783,12 @@ public class ChangesPanel extends VBox {
                 menu.getItems().add(item("解决冲突…", e -> openConflictDialog(f)));
                 menu.getItems().add(item("标记已解决(保留当前内容)", e -> {
                     toCommit.add(f.path);
-                    act(() -> new JGitService(repo()).stage(List.of(f.path)), "已标记解决 " + f.path);
+                    act(() -> {
+                        GitProcess.GitResult r = NativeGit.markResolved(repo(), List.of(f.path));
+                        if (!r.ok()) throw new RuntimeException(r.message());
+                    }, "已标记解决 " + f.path);
                 }));
-                menu.getItems().add(item("中止合并/变基(恢复原状)", e -> {
-                    if (Fx.confirm("中止操作", "确定中止进行中的合并/变基,恢复到操作前的状态?")) {
-                        Fx.bg("中止…", () -> org.easygit.core.NativeGit.abortInProgress(repo()).ok(),
-                                ok -> {
-                                    Fx.status(ok ? "已中止,恢复原状" : "中止失败(可能没有进行中的合并/变基)");
-                                    refreshAll.run();
-                                });
-                    }
-                }));
+                menu.getItems().add(item("中止合并/变基(恢复原状)", e -> abortOperation()));
             } else if (fromStaged) {
                 menu.getItems().add(batchItem(getListView(), f, "移出待提交", ts -> removeFromCommit(ts)));
                 menu.getItems().add(item("Blame 此文件", e -> blameOpener.accept(f.path)));
