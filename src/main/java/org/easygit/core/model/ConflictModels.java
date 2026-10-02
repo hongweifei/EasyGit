@@ -12,6 +12,10 @@ public final class ConflictModels {
     /** 一个冲突块。 */
     public static final class ConflictRegion {
         public final int startLine;              // 文件中起始行(1-based,含 <<<<<<< 行)
+        /** 原始标记行(如 "<<<<<<< HEAD");保留原样才能"没让改的部分一个字节都不动" */
+        public String oursMarker;
+        public String baseMarker;
+        public String theirsMarker;
         public final List<String> ours = new ArrayList<>();
         public final List<String> base = new ArrayList<>();   // diff3 时存在
         public final List<String> theirs = new ArrayList<>();

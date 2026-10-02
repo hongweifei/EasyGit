@@ -246,13 +246,18 @@ public final class NativeGit {
         return GitProcess.in(repo).exec("rebase", "@{u}");
     }
 
+    /** 未解决的冲突文件路径列表(取不到状态时为空)。 */
+    public static List<String> unmergedPaths(Path repo) {
+        try {
+            return status(repo).changes().stream().filter(f -> f.unmerged).map(f -> f.path).toList();
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
     /** 冲突文件数(未解决)。取不到状态时返回 0。 */
     public static int unmergedCount(Path repo) {
-        try {
-            return (int) status(repo).changes().stream().filter(f -> f.unmerged).count();
-        } catch (Exception e) {
-            return 0;
-        }
+        return unmergedPaths(repo).size();
     }
 
     /** 工作区是否有未提交改动(含未跟踪)。 */
@@ -275,15 +280,172 @@ public final class NativeGit {
 
     /** 中止进行中的合并/变基/拣选(按仓库当前状态挑命令)。 */
     public static GitProcess.GitResult abortInProgress(Path repo) {
-        Path g = repo.resolve(".git");
-        if (java.nio.file.Files.isDirectory(g.resolve("rebase-merge"))
-                || java.nio.file.Files.isDirectory(g.resolve("rebase-apply"))) {
+        Path g = gitDir(repo);
+        if (Files.isDirectory(g.resolve("rebase-merge"))) {
             return GitProcess.in(repo).exec("rebase", "--abort");
         }
-        if (java.nio.file.Files.exists(g.resolve("CHERRY_PICK_HEAD"))) {
+        Path ra = g.resolve("rebase-apply");
+        if (Files.isDirectory(ra)) {
+            // rebase-apply 目录 `git am` 也在用,靠 applying 标记区分,否则会用错命令
+            return Files.exists(ra.resolve("applying"))
+                    ? GitProcess.in(repo).exec("am", "--abort")
+                    : GitProcess.in(repo).exec("rebase", "--abort");
+        }
+        if (Files.exists(g.resolve("CHERRY_PICK_HEAD"))) {
             return GitProcess.in(repo).exec("cherry-pick", "--abort");
         }
+        if (Files.exists(g.resolve("REVERT_HEAD"))) {
+            return GitProcess.in(repo).exec("revert", "--abort");
+        }
         return mergeAbort(repo);
+    }
+
+    // ---------- 冲突处理:进行中的操作 + 继续/跳过 + 标记已解决 ----------
+
+    /**
+     * 读取进行中的合并/变基/拣选状态(直接看 .git 下的标记文件,不起子进程)。
+     *
+     * 界面上「冲突」只是表象:变基停在冲突上时,用户解决完必须「继续」才会放完剩下的提交;
+     * 合并停在冲突上时,提交才算完成这次合并。把这个状态暴露出去,界面才能给出正确入口。
+     */
+    public static org.easygit.core.model.MergeState mergeState(Path repo) {
+        Path g = gitDir(repo);
+        if (!Files.isDirectory(g)) return org.easygit.core.model.MergeState.NONE;
+
+        Path rebaseMerge = g.resolve("rebase-merge");
+        if (Files.isDirectory(rebaseMerge)) {
+            String branch = readText(rebaseMerge.resolve("head-name")).strip()
+                    .replace("refs/heads/", "");
+            return new org.easygit.core.model.MergeState(org.easygit.core.model.MergeState.Kind.REBASE,
+                    branch, "", readInt(rebaseMerge.resolve("msgnum")), readInt(rebaseMerge.resolve("end")));
+        }
+        Path rebaseApply = g.resolve("rebase-apply");
+        if (Files.isDirectory(rebaseApply)) {
+            boolean am = Files.exists(rebaseApply.resolve("applying"));
+            String branch = readText(rebaseApply.resolve("head-name")).strip()
+                    .replace("refs/heads/", "");
+            return new org.easygit.core.model.MergeState(
+                    am ? org.easygit.core.model.MergeState.Kind.AM
+                       : org.easygit.core.model.MergeState.Kind.REBASE,
+                    branch, "",
+                    firstPositive(readInt(rebaseApply.resolve("msgnum")), readInt(rebaseApply.resolve("next"))),
+                    firstPositive(readInt(rebaseApply.resolve("end")), readInt(rebaseApply.resolve("last"))));
+        }
+        if (Files.exists(g.resolve("CHERRY_PICK_HEAD"))) {
+            return new org.easygit.core.model.MergeState(org.easygit.core.model.MergeState.Kind.CHERRY_PICK,
+                    shortSha(readText(g.resolve("CHERRY_PICK_HEAD"))), "", 0, 0);
+        }
+        if (Files.exists(g.resolve("REVERT_HEAD"))) {
+            return new org.easygit.core.model.MergeState(org.easygit.core.model.MergeState.Kind.REVERT,
+                    shortSha(readText(g.resolve("REVERT_HEAD"))), "", 0, 0);
+        }
+        if (Files.exists(g.resolve("MERGE_HEAD"))) {
+            String msg = stripComments(readText(g.resolve("MERGE_MSG")));
+            return new org.easygit.core.model.MergeState(org.easygit.core.model.MergeState.Kind.MERGE,
+                    firstLine(msg), msg, 0, 0);
+        }
+        return org.easygit.core.model.MergeState.NONE;
+    }
+
+    /**
+     * 继续进行中的操作。
+     *
+     * 合并走 {@code commit --no-edit}:git 早已把默认说明写进 MERGE_MSG,提交即完成合并。
+     * 变基/拣选/回滚/打补丁一律加 {@code -c core.editor=true}:否则 git 会拉起编辑器,
+     * 而 GUI 里没有终端 —— 轻则报"无法运行编辑器",重则子进程一直等到超时(实测过这类挂死)。
+     */
+    public static GitProcess.GitResult continueInProgress(Path repo) {
+        return switch (mergeState(repo).kind()) {
+            case MERGE -> GitProcess.in(repo).exec("commit", "--no-edit");
+            case REBASE -> GitProcess.in(repo).exec("-c", "core.editor=true", "rebase", "--continue");
+            case CHERRY_PICK -> GitProcess.in(repo).exec("-c", "core.editor=true", "cherry-pick", "--continue");
+            case REVERT -> GitProcess.in(repo).exec("-c", "core.editor=true", "revert", "--continue");
+            case AM -> GitProcess.in(repo).exec("-c", "core.editor=true", "am", "--continue");
+            case NONE -> new GitProcess.GitResult(-1, "", "当前没有进行中的合并/变基/拣选,无需继续");
+        };
+    }
+
+    /** 跳过变基中的当前提交(该提交的改动会丢弃)。其余操作没有"跳过"。 */
+    public static GitProcess.GitResult skipInProgress(Path repo) {
+        if (mergeState(repo).kind() != org.easygit.core.model.MergeState.Kind.REBASE) {
+            return new GitProcess.GitResult(-1, "", "只有变基可以跳过单个提交");
+        }
+        return GitProcess.in(repo).exec("-c", "core.editor=true", "rebase", "--skip");
+    }
+
+    /**
+     * 用 CLI 把文件标记为已解决({@code git add})。
+     * 走 CLI 而不是 JGit:索引里的冲突阶段会被正确清掉,LFS 过滤器也照常执行。
+     */
+    public static GitProcess.GitResult markResolved(Path repo, List<String> paths) {
+        List<String> args = new ArrayList<>(List.of("add", "--"));
+        args.addAll(paths);
+        return GitProcess.in(repo).exec(args.toArray(String[]::new));
+    }
+
+    /**
+     * 工作树的 .git 目录。
+     * 普通仓库是 {@code <repo>/.git} 目录;工作树/子模块里 .git 是文件,内容为 "gitdir: <路径>"。
+     */
+    private static Path gitDir(Path repo) {
+        Path g = repo.resolve(".git");
+        if (Files.isDirectory(g)) return g;
+        if (Files.isRegularFile(g)) {
+            String s = readText(g).strip();
+            int i = s.indexOf(':');
+            if (i > 0) {
+                try {
+                    Path p = Path.of(s.substring(i + 1).strip());
+                    return p.isAbsolute() ? p : repo.resolve(p).normalize();
+                } catch (Exception ignored) {
+                    // 路径解析不了就退回默认位置,让后面的判断自然失败
+                }
+            }
+        }
+        return g;
+    }
+
+    /** 读一个小文件,失败给空串。 */
+    private static String readText(Path p) {
+        try {
+            return Files.readString(p);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 读一个只含数字的小文件(msgnum/end 等),失败给 0。 */
+    private static int readInt(Path p) {
+        try {
+            return Integer.parseInt(readText(p).strip());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static int firstPositive(int a, int b) {
+        return a > 0 ? a : Math.max(b, 0);
+    }
+
+    private static String shortSha(String sha) {
+        String s = sha == null ? "" : sha.strip();
+        return s.length() <= 8 ? s : s.substring(0, 8);
+    }
+
+    /** 去掉提交说明里的注释行(MERGE_MSG 末尾的 "# Conflicts:" 那一段)。 */
+    private static String stripComments(String text) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            if (line.startsWith("#")) continue;
+            sb.append(line).append('\n');
+        }
+        return sb.toString().strip();
+    }
+
+    private static String firstLine(String text) {
+        String s = text == null ? "" : text.strip();
+        int i = s.indexOf('\n');
+        return i < 0 ? s : s.substring(0, i).strip();
     }
 
     /** 这类报错说明"等一下重试也没用",适合弹对话框;网络类则适合提示后重试。 */
