@@ -64,6 +64,8 @@ public final class Fx {
 
     private static volatile Consumer<String> busyListener;
     private static volatile Consumer<String> messageListener;
+    /** 最后一条状态栏消息。供"这条提示还有效吗"之类的判断使用(状态栏消息是常驻到下一次消息的)。 */
+    private static volatile String lastMessage = "";
 
     private Fx() {}
 
@@ -240,9 +242,13 @@ public final class Fx {
     }
 
     public static void status(String msg) {
+        lastMessage = msg == null ? "" : msg;
         Consumer<String> l = messageListener;
         if (l != null) l.accept(msg);
     }
+
+    /** 状态栏当前那条消息(空串表示没有)。 */
+    public static String lastMessage() { return lastMessage; }
 
     // ---------- 对话框 ----------
 

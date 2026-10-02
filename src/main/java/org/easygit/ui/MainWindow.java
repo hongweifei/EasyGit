@@ -386,6 +386,7 @@ public class MainWindow {
         if (repo == null) {
             loadedRepoPath = null;
             refreshingEpoch = -1;
+            clearSwitchHint();   // 仓库都关了,切换提示不能留着
             root.setLeft(null);
             root.setCenter(welcome);
             headerBar.setRepo("未打开仓库", "");
@@ -422,7 +423,10 @@ public class MainWindow {
             statusBar.updateRepo(repo.toString(), null, false, 0, 0);
             statusBar.updateCounts(0, 0, 0, 0);
             statusBar.updateLfs(false, 0);
-            Fx.status("已切换到 " + repoName);
+            // 切换提示是**临时**的:这一轮数据到位后由 clearSwitchHint() 撤掉。
+            // (状态栏消息是"常驻到下一次消息"的,不主动撤掉就会一直挂着「正在刷新…」)
+            switchHint = "已切换到 " + repoName;
+            Fx.status(switchHint);
             // 看过的仓库:先用上次的快照把界面填上(stale-while-revalidate),
             // 不用再等 status + for-each-ref 两个进程(实测 350~500ms);后台刷新一到就替换
             paintSnapshot(repo, repoName);
@@ -448,6 +452,8 @@ public class MainWindow {
             return new RefreshData(st, refs.branches(), refs.fingerprint());
         }, data -> {
             refreshingEpoch = -1;
+            // 这一轮刷新已经结束(成功或失败),切换时的临时提示该撤了
+            clearSwitchHint();
             if (data == null) return;
             applyStatus(repo, data.status, data.branches, data.refs);
             rememberSnapshot(repo, data.status, data.branches, data.refs);
@@ -624,7 +630,22 @@ public class MainWindow {
         Snapshot snap = snapshots.get(repo.toString());
         if (snap == null) return;
         applyStatus(repo, snap.status(), snap.branches(), snap.refs());
-        Fx.status("已切换到 " + repoName + "(先显示上次快照,正在刷新…)");
+        switchHint = "已切换到 " + repoName + "（先显示上次快照，正在刷新…）";
+        Fx.status(switchHint);
+    }
+
+    /** 本次切换留下的临时提示(数据到位后要撤掉);null 表示没有。 */
+    private String switchHint;
+
+    /**
+     * 撤掉切换时的临时提示。
+     * 状态栏消息是常驻到下一次消息的,不主动撤就会一直挂着「正在刷新…」(用户实测反馈)。
+     * 只撤**我们自己留下的那条**:期间若有别的操作写了新消息(如「提交成功 abc1234」),不动它。
+     */
+    private void clearSwitchHint() {
+        String hint = switchHint;
+        switchHint = null;
+        if (hint != null && hint.equals(Fx.lastMessage())) Fx.status("");
     }
 
     private void rememberSnapshot(Path repo, StatusResult st, List<BranchInfo> branches, String refs) {
