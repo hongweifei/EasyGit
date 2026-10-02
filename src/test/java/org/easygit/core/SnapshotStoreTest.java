@@ -206,6 +206,51 @@ class SnapshotStoreTest {
         assertTrue(SnapshotStore.load(repoA).isEmpty(), "超过上限的快照不该落盘/读回");
     }
 
+    @Test
+    @DisplayName("读盘播种是同步的(首帧就得有内容)—— 由调用线程直接读写")
+    void loadStaysSynchronous() {
+        SnapshotStore.save(repoA, full(repoA));
+        assertTrue(SnapshotStore.load(repoA).isPresent());
+        assertEquals(Thread.currentThread().getName(), SnapshotStore.lastLoadThread(),
+                "播种必须同步:异步读盘会让首帧空着,持久化就没意义了(写盘才走后台线程)");
+    }
+
+    @Test
+    @DisplayName("异步落盘:不占用调用线程(切仓时不能卡 FX 线程),flush 后一定读得到")
+    void asyncSaveRunsOffCallerThread() {
+        SnapshotStore.saveAsync(repoA, full(repoA));
+        assertTrue(SnapshotStore.flush(10_000), "flush 应该等到排队的落盘写完");
+
+        assertEquals("easygit-snapshot", SnapshotStore.lastIoThread(),
+                "落盘必须发生在后台线程 —— 2000 条提交的快照序列化要 ~60ms,占着 FX 线程就是掉帧");
+        assertNotEquals(Thread.currentThread().getName(), SnapshotStore.lastIoThread());
+        assertTrue(SnapshotStore.load(repoA).isPresent(), "flush 之后一定能读回来");
+    }
+
+    @Test
+    @DisplayName("异步落盘按提交顺序写:后提交的覆盖先提交的(单线程队列)")
+    void asyncSaveKeepsOrder() {
+        RepoSnapshot first = full(repoA);
+        SnapshotStore.saveAsync(repoA, new RepoSnapshot(first.version(), first.savedAt(), first.repoPath(),
+                "refs-1", first.status(), first.history()));
+        for (int i = 0; i < 20; i++) {
+            SnapshotStore.saveAsync(repoA, new RepoSnapshot(first.version(), first.savedAt(), first.repoPath(),
+                    "refs-2", first.status(), first.history()));
+        }
+        assertTrue(SnapshotStore.flush(10_000));
+        assertEquals("refs-2", SnapshotStore.load(repoA).orElseThrow().refs(),
+                "最后一次提交的内容必须在磁盘上(顺序被打乱就会读到旧的那份)");
+    }
+
+    @Test
+    @DisplayName("异步落盘:空参数直接忽略,不抛异常")
+    void asyncSaveIgnoresNulls() {
+        SnapshotStore.saveAsync(null, full(repoA));
+        SnapshotStore.saveAsync(repoA, null);
+        assertTrue(SnapshotStore.flush(5_000));
+        assertTrue(SnapshotStore.load(repoA).isEmpty(), "什么都没写,读不到是正常的");
+    }
+
     // ---------- 辅助 ----------
 
     private Path onlyJson() throws Exception {

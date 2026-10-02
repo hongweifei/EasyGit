@@ -112,6 +112,75 @@ class RefreshCostTest {
         assertTrue(after.contains("refs/heads/side"), "指纹应包含新引用: " + after);
     }
 
+    // ---------- 并行取数(连续切换仓库时每次刷新都要付的成本)----------
+
+    @Test
+    @DisplayName("阶段一 = status + for-each-ref 两个进程,结果与串行取一致")
+    void readStateIsTwoProcessesAndMatchesSerial() {
+        int before = GitProcess.execCount();
+        NativeGit.RepoState state = NativeGit.readState(work);
+        int used = GitProcess.execCount() - before;
+
+        assertEquals(2, used, "阶段一就该是两个进程(并行不增加进程数,只是不再排队等)");
+        assertEquals(NativeGit.status(work).branch(), state.status().branch());
+        assertEquals(NativeGit.refSnapshot(work).fingerprint(), state.fingerprint(),
+                "指纹必须与 phase1/轮询共用同一种格式");
+        assertEquals(NativeGit.branches(work).size(), state.branches().size());
+    }
+
+    @Test
+    @DisplayName("阶段一的两条读取真的并行(运行区间重叠,不是先后排队)")
+    void readStateReadsInParallel() {
+        NativeGit.readState(work);
+        assertTrue(overlapInRecent("status --porcelain", "for-each-ref --format=%(refname)"),
+                "status 与 for-each-ref 必须同时在跑(串行实现下两者的时间区间不会重叠):\n" + recentDump());
+    }
+
+    @Test
+    @DisplayName("历史 = log + rev-list 两个进程,且并行")
+    void readHistoryIsTwoProcessesAndParallel() throws Exception {
+        Files.writeString(work.resolve("h.txt"), "x\n");
+        commit(work, "history-1");
+
+        int before = GitProcess.execCount();
+        NativeGit.HistoryRead read = NativeGit.readHistory(work, 100, false, null);
+        int used = GitProcess.execCount() - before;
+
+        assertEquals(2, used, "历史加载就该是两个进程");
+        assertEquals(NativeGit.log(work, 100, false, null).size(), read.log().size());
+        assertEquals(NativeGit.unpushedShas(work, 100), read.unpushed());
+        assertTrue(overlapInRecent("log -z --date-order", "rev-list --max-count=100 @{upstream}"),
+                "log 与 rev-list 必须同时在跑:\n" + recentDump());
+    }
+
+    @Test
+    @DisplayName("空仓库(没有任何提交)的历史读取按空历史返回,不抛异常")
+    void readHistoryOnEmptyRepo() throws Exception {
+        Path empty = base.resolve("empty");
+        git(base, "init", "-q", empty.toString());
+        NativeGit.HistoryRead read = NativeGit.readHistory(empty, 100, false, null);
+        assertTrue(read.log().isEmpty(), "空仓库没有提交");
+        assertTrue(read.unpushed().isEmpty());
+    }
+
+    /** 最近的一批命令里,两条前缀对应的命令是否存在时间重叠的一对。 */
+    private static boolean overlapInRecent(String firstPrefix, String secondPrefix) {
+        List<GitProcess.Run> runs = GitProcess.recent();
+        for (GitProcess.Run a : runs) {
+            if (!a.cmd.startsWith(firstPrefix)) continue;
+            for (GitProcess.Run b : runs) {
+                if (b.cmd.startsWith(secondPrefix) && a.overlaps(b)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static String recentDump() {
+        StringBuilder sb = new StringBuilder();
+        for (GitProcess.Run r : GitProcess.recent()) sb.append("  ").append(r).append('\n');
+        return sb.toString();
+    }
+
     // ---------- git 夹具 ----------
 
     private static void config(Path repo) throws Exception {
