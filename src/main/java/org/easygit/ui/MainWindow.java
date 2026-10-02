@@ -135,6 +135,15 @@ public class MainWindow {
         root.setCenter(welcome);
 
         RepoManager.get().addListener(repo -> requestRefresh());
+        // 连点仓库:手停下来之后才为新仓库取数(见 requestRefresh / SETTLE_MS)
+        settling.setOnFinished(e -> {
+            Path repo = RepoManager.get().current();
+            if (repo == null) {
+                refreshAll();     // 已经切空了:按空态收尾
+                return;
+            }
+            startFetch(repo);
+        });
 
         // 轻量自动刷新:每 5 秒刷新工作区状态。
         // 窗口不在前台时降到 15 秒一次:一轮轮询要起 2 个 git 进程(指纹 + status),
@@ -223,8 +232,10 @@ public class MainWindow {
         });
         stage.setOnCloseRequest(e -> {
             saveWindowBounds();
-            // 关窗前把当前仓库的快照落盘:下次开程序就能先把上次的样子画出来
+            // 关窗前把当前仓库的快照落盘:下次开程序就能先把上次的样子画出来。
+            // 写盘已挪到后台线程,这里要**等它写完**再退,否则这一份就白写了。
             persistSnapshots(RepoManager.get().current());
+            org.easygit.core.SnapshotStore.flush(1500);
         });
         stage.show();
         refreshAll();
@@ -366,29 +377,69 @@ public class MainWindow {
     /** 本轮整仓刷新的开始时刻:回调万一被丢弃,也不能让"在途"永远成立(轮询会被永久跳过)。 */
     private long refreshingSince;
 
-    /** 切换通知是否已排队(连续切换时把多次通知合并成一次刷新)。 */
+    /** 切换通知是否已排队(同一拍里的多次通知只换一次皮)。 */
     private boolean refreshQueued;
 
     /**
-     * 仓库切换通知 -> 合并刷新。
-     * 连续切换仓库时通知会连着来好几条,而每次通知都发起一轮"状态 + 历史"取数;
-     * 合并后只按最终仓库取一次,旧仓库那一轮由 {@link Fx#dropStaleTasks()} 收走。
+     * 取数是否还没落定:有一轮在后台跑,或者已经排了延迟取数。
+     * 连续切仓期间它一直是 true —— 这正是"用户还在连点"的判据。
+     */
+    private boolean fetchPending;
+
+    /** 上一次整仓取数**完成**的时刻(初始 0 = 还没取过)。 */
+    private long fullRefreshDoneAt;
+    /** 整仓取数刚完成后的这段时间里让轮询让路:那一拍必然是重复的。 */
+    private static final long POLL_AFTER_REFRESH_MS = 1_500;
+
+    /**
+     * 连点仓库时的"停稳"窗口:上一轮取数还没回来就又切了仓库,说明用户还在找东西,
+     * 这时**先不为新仓库起 git 进程**,等手停下来再取。
+     *
+     * 为什么值得等:6 次连点里前 5 次的结果注定要被丢掉(切走就作废),却各自起了 2 个
+     * git 子进程(大仓库上还要扫工作区)。合并成一次,省下的是磁盘 IO,不只是时间。
+     * 单次切换时什么都没有在途,走的是"立刻取"那条路 —— 不为此付任何延迟。
+     */
+    private static final double SETTLE_MS = 120;
+    private final javafx.animation.PauseTransition settling =
+            new javafx.animation.PauseTransition(Duration.millis(SETTLE_MS));
+
+    /**
+     * 仓库切换通知 -> 立刻换皮,取数按"是否还在连点"决定立刻取还是停稳再取。
+     *
+     * 注意换皮(清界面 + 快照上屏)必须**同步、立刻**做:用户已经点到别的仓库了,
+     * 界面上还挂着上一个仓库的数据就是"串仓",哪怕只挂 100ms 也不行。
      */
     private void requestRefresh() {
         if (refreshQueued) return;
         refreshQueued = true;
         Platform.runLater(() -> {
             refreshQueued = false;
-            refreshAll();
+            boolean wasPending = fetchPending;
+            fetchPending = true;             // 连点期间保持"取数没落定"
+            Fx.dropStaleTasks();             // 旧仓库在途的取数立刻收回(它已经没用了)
+            Path repo = RepoManager.get().current();
+            if (repo == null) {
+                refreshAll();                // 仓库被关掉:走空态,顺带清掉延迟取数
+                return;
+            }
+            paintSwitch(repo);               // 同步换皮 + 快照上屏
+            if (wasPending) {
+                settling.playFromStart();    // 还在连点:每切一次就顺延,手停下来再取
+            } else {
+                startFetch(repo);            // 单个切换:立刻取,不额外等
+            }
         });
     }
 
+    /** 手动刷新 / 操作完成后刷新:换皮(若切了仓库)+ 立刻取数。 */
     private void refreshAll() {
         // 旧仓库还在跑/排队的刷新立刻作废:任务不再启动,结果不再回投
         Fx.dropStaleTasks();
+        settling.stop();
         RepoGuard guard = RepoGuard.capture();
         Path repo = guard.repo();
         if (repo == null) {
+            fetchPending = false;
             loadedRepoPath = null;
             refreshingEpoch = -1;
             clearSwitchHint();   // 仓库都关了,切换提示不能留着
@@ -401,8 +452,32 @@ public class MainWindow {
             refreshWelcomeList();
             return;
         }
-        refreshingEpoch = RepoManager.get().epoch(); // 本轮整仓刷新的代号(轮询期间不再叠加)
-        refreshingSince = System.currentTimeMillis();
+        paintSwitch(repo);
+        startFetch(repo);
+    }
+
+    /**
+     * 换皮:当前仓库与界面上那份不同时,立刻把上一个仓库的内容清掉、用快照把新仓库填上。
+     * 只做同步的、便宜的事(内存快照;磁盘快照的解析也是同步的 —— 首帧就得有内容,
+     * 那是持久化的意义所在),真正的取数在 {@link #startFetch} 里。
+     */
+    private void paintSwitch(Path repo) {
+        if (repo.toString().equals(loadedRepoPath)) return;   // 还是这个仓库:不必重新换皮
+        // 离开旧仓库前把它的快照落盘(下次重开程序就能先画出来)。写盘在后台线程,见 persistSnapshots
+        if (loadedRepoPath != null) persistSnapshots(java.nio.file.Path.of(loadedRepoPath));
+        loadedRepoPath = repo.toString();
+        lastRefsFingerprint = null;   // 新仓库:下一次轮询强制重载历史
+        currentStatus = null;
+        tabs.getTabs().removeIf(t -> t.getText().startsWith("Blame:"));
+        changesPanel.onRepoSwitched();
+        historyPanel.onRepoSwitched();
+        branchPanel.refresh(List.of());
+        stashPanel.refresh(List.of());
+        // 状态栏先归零:否则新仓库的数据到位前,下面显示的还是上一个仓库的分支/领先落后
+        statusBar.updateRepo(repo.toString(), null, false, 0, 0);
+        statusBar.updateCounts(0, 0, 0, 0);
+        statusBar.updateLfs(false, 0);
+
         root.setLeft(leftBox);
         if (root.getCenter() != centerCard) root.setCenter(centerCard);
 
@@ -414,63 +489,57 @@ public class MainWindow {
         headerBar.setRepo(group.isBlank() ? repoName : repoName + " · " + group, repo.toString());
         headerBar.rebuildRepoSwitcher(stage);
 
-        // 切换到不同仓库时:立即清掉上一个仓库的内容与 Blame 页签
-        if (!repo.toString().equals(loadedRepoPath)) {
-            // 离开旧仓库前把它的快照落盘(下次重开程序就能先画出来)
-            if (loadedRepoPath != null) persistSnapshots(java.nio.file.Path.of(loadedRepoPath));
-            loadedRepoPath = repo.toString();
-            lastRefsFingerprint = null;   // 新仓库:下一次轮询强制重载历史
-            currentStatus = null;
-            tabs.getTabs().removeIf(t -> t.getText().startsWith("Blame:"));
-            changesPanel.onRepoSwitched();
-            historyPanel.onRepoSwitched();
-            branchPanel.refresh(List.of());
-            stashPanel.refresh(List.of());
-            // 状态栏先归零:否则新仓库的数据到位前,下面显示的还是上一个仓库的分支/领先落后
-            statusBar.updateRepo(repo.toString(), null, false, 0, 0);
-            statusBar.updateCounts(0, 0, 0, 0);
-            statusBar.updateLfs(false, 0);
-            // 切换提示是**临时**的:这一轮数据到位后由 clearSwitchHint() 撤掉。
-            // (状态栏消息是"常驻到下一次消息"的,不主动撤掉就会一直挂着「正在刷新…」)
-            switchHint = "已切换到 " + repoName;
-            Fx.status(switchHint);
-            // 看过的仓库:先用上次的快照把界面填上(stale-while-revalidate),
-            // 不用再等 status + for-each-ref 两个进程(实测 350~500ms);后台刷新一到就替换。
-            // 快照来源有两处:本次运行的内存缓存,和上次运行落盘的磁盘快照(重开程序也能立刻上屏)
-            seedSnapshotsFromDisk(repo);
-            paintSnapshot(repo, repoName);
-            paintHistorySnapshot(repo);
-        }
+        // 切换提示是**临时**的:这一轮数据到位后由 clearSwitchHint() 撤掉。
+        // (状态栏消息是"常驻到下一次消息"的,不主动撤掉就会一直挂着「正在刷新…」)
+        switchHint = "已切换到 " + repoName;
+        Fx.status(switchHint);
+        // 看过的仓库:先用上次的快照把界面填上(stale-while-revalidate),
+        // 不用再等取数(实测 350~500ms);后台刷新一到就替换。
+        // 快照来源有两处:本次运行的内存缓存,和上次运行落盘的磁盘快照(重开程序也能立刻上屏)
+        seedSnapshotsFromDisk(repo);
+        paintSnapshot(repo, repoName);
+        paintHistorySnapshot(repo);
+        // 取数尚未开始(可能还要等"停稳"),先把轮询压住:别让 5 秒那一拍插进来抢 IO
+        refreshingEpoch = RepoManager.get().epoch();
+        refreshingSince = System.currentTimeMillis();
+    }
+
+    /** 真正去取数(阶段一 + LFS + 按需的历史/暂存)。 */
+    private void startFetch(Path repo) {
+        settling.stop();
+        fetchPending = true;
+        RepoGuard guard = RepoGuard.capture();
+        refreshingEpoch = RepoManager.get().epoch(); // 本轮整仓刷新的代号(轮询期间不再叠加)
+        refreshingSince = System.currentTimeMillis();
 
         boolean allBranches = historyPanel.allBranchesSelected();
         int maxCommits = AppSettings.get().maxCommits();
 
-        // 阶段一(快):状态 / 分支+引用指纹 —— 让界面先可用
+        // 阶段一(快):状态 / 分支+引用指纹 —— 让界面先可用。
+        // 两条命令在核心层并行取(见 NativeGit.readState):切仓时省下差不多一个进程的等待。
         Fx.bg("刷新仓库状态…", guard, () -> {
-            StatusResult st;
-            NativeGit.RefSnapshot refs;
             try {
-                st = NativeGit.status(repo);
-                // 分支列表与引用指纹共用一次 for-each-ref:两个进程并一个(见 NativeGit.refSnapshot)
-                refs = NativeGit.refSnapshot(repo);
+                return NativeGit.readState(repo);
             } catch (Exception ex) {
                 // 后台刷新失败不打扰用户,仅记录输出面板
                 UiLog.line("✖ 读取仓库状态失败: " + ex.getMessage());
                 return null;
             }
-            return new RefreshData(st, refs.branches(), refs.fingerprint());
         }, data -> {
             refreshingEpoch = -1;
+            fetchPending = false;        // 这一轮取数结束了(成功或失败)
+            // 记下"刚整仓取过数":轮询用这个时刻避开紧跟其后的重复一拍(见 lightRefresh)
+            fullRefreshDoneAt = System.currentTimeMillis();
             // 这一轮刷新已经结束(成功或失败),切换时的临时提示该撤了
             clearSwitchHint();
             if (data == null) return;
-            applyStatus(repo, data.status, data.branches, data.refs);
-            rememberSnapshot(repo, data.status, data.branches, data.refs);
+            applyStatus(repo, data.status(), data.branches(), data.fingerprint());
+            rememberSnapshot(repo, data.status(), data.branches(), data.fingerprint());
 
             // 提交历史:这里才拿到新的引用指纹,据此决定要不要重取。
             // 指纹 / 条数上限 / 「所有分支」/ 文件筛选都没变 ⇒ 缓存就是最新的,**一次 git 都不起**;
             // 变了才重载(「历史」页可见就立刻重载,不可见只置脏,等切到该页再补)。
-            boolean historyFresh = historyCacheMatches(repo, data.refs, allBranches, maxCommits);
+            boolean historyFresh = historyCacheMatches(repo, data.fingerprint(), allBranches, maxCommits);
             if (historyTab.isSelected()) {
                 if (!historyFresh) loadHistory(guard, repo, allBranches, maxCommits);
                 historyDirty = false;
@@ -521,18 +590,12 @@ public class MainWindow {
     /** 加载提交历史 + 未推送标记(后处理统一在 HistoryPanel.setCommits 里)。 */
     private void loadHistory(RepoGuard guard, Path repo, boolean allBranches, int maxCommits) {
         final String refsAtLoad = lastRefsFingerprint;
-        Fx.bg("读取提交历史…", guard, () -> {
-            List<CommitEntry> log = List.of();
-            try {
-                log = NativeGit.log(repo, maxCommits, allBranches, null);
-            } catch (Exception ignored) {
-                // 空仓库没有提交
-            }
-            return new HistoryData(log, NativeGit.unpushedShas(repo, maxCommits));
-        }, data -> {
-            rememberHistory(repo, data.log(), data.unpushed(), refsAtLoad, maxCommits);
-            historyPanel.setCommits(data.log(), data.unpushed());
-        });
+        // log 与 rev-list 在核心层并行取(见 NativeGit.readHistory):省下差不多一个进程的等待
+        Fx.bg("读取提交历史…", guard, () -> NativeGit.readHistory(repo, maxCommits, allBranches, null),
+                data -> {
+                    rememberHistory(repo, data.log(), data.unpushed(), refsAtLoad, maxCommits);
+                    historyPanel.setCommits(data.log(), data.unpushed());
+                });
     }
 
     private void lightRefresh() {
@@ -540,6 +603,9 @@ public class MainWindow {
         // 但"在途"最多认 10 秒——否则一个被丢弃的回调会让轮询永久停摆(界面看着就像卡住了)
         if (RepoManager.get().epoch() == refreshingEpoch
                 && System.currentTimeMillis() - refreshingSince < 10_000) return;
+        // 刚整仓取完数(切仓/手动刷新)马上又来一拍轮询是纯重复:数据刚取回来,这一拍还是那 2 个进程。
+        // 连续切仓时"停稳 → 取数 → 轮询又立刻补一拍"正好撞在这个窗口里。
+        if (System.currentTimeMillis() - fullRefreshDoneAt < POLL_AFTER_REFRESH_MS) return;
         RepoGuard guard = RepoGuard.capture();
         Path repo = guard.repo();
         if (repo == null) return;
@@ -547,9 +613,10 @@ public class MainWindow {
             try {
                 // 指纹覆盖所有引用,而不只是 HEAD:勾选「所有分支」时侧支/远程分支
                 // 的新提交不动 HEAD,只看 HEAD 会让历史页永远不刷新(用户必须手动点)。
-                String refs = NativeGit.refsFingerprint(repo);
-                StatusResult st = NativeGit.status(repo);
-                return new LightData(st, refs);
+                // 指纹与状态互不依赖 —— 并行取,轮询这一拍也少等一个进程
+                org.easygit.core.Parallel.Both<String, StatusResult> both = org.easygit.core.Parallel.both(
+                        () -> NativeGit.refsFingerprint(repo), () -> NativeGit.status(repo));
+                return new LightData(both.second(), both.first());
             } catch (Exception ex) {
                 UiLog.line("✖ 读取仓库状态失败: " + ex.getMessage());
                 return null;
@@ -596,8 +663,6 @@ public class MainWindow {
         tabs.getSelectionModel().select(tab);
         tab.setOnClosed(e -> view.getChildren().clear());
     }
-
-    private record RefreshData(StatusResult status, List<BranchInfo> branches, String refs) {}
 
     /** 一个仓库最近一次的「阶段一」数据(状态 + 分支 + 引用指纹)。 */
     private record Snapshot(StatusResult status, List<BranchInfo> branches, String refs, long savedAt) {}
@@ -726,25 +791,39 @@ public class MainWindow {
     /**
      * 把某个仓库的内存快照落盘(重新打开程序时用它先上屏)。
      * 只在"离开这个仓库"和"关窗"时写:写入是有成本的文件 IO,不需要每次刷新都写。
+     *
+     * 两件事决定了它不能让界面等:
+     * <ul>
+     *   <li><b>组装在 FX 线程、写盘在后台</b>:一份 2000 条提交的快照序列化 + 写盘实测 ~63ms,
+     *       连续切换时每切一次就掉几帧。这里只组装对象(便宜),写盘交给 {@code SnapshotStore.saveAsync}。</li>
+     *   <li><b>没变化就不重写</b>:连点仓库时,中途那些仓库往往还没等来自己的刷新就走了,
+     *       内容与上次落盘的一模一样 —— 再写一遍纯属白花磁盘 IO(靠 savedAt 判断)。</li>
+     * </ul>
      */
     private void persistSnapshots(Path repo) {
         if (repo == null) return;
         Snapshot st = snapshots.get(repo.toString());
         HistorySnapshot h = historySnapshots.get(repo.toString());
         if (st == null && h == null) return;
+        String stamp = (st == null ? "-" : st.savedAt()) + "|" + (h == null ? "-" : h.savedAt());
+        if (stamp.equals(persistedStamps.get(repo.toString()))) return;   // 磁盘上已经是这一份,别重写
+        persistedStamps.put(repo.toString(), stamp);
         try {
             RepoSnapshot.StatusSnap ss = st == null ? null : new RepoSnapshot.StatusSnap(
                     st.status().oid(), st.status().branch(), st.status().upstream(), st.status().detached(),
                     st.status().ahead(), st.status().behind(), st.status().changes(), st.branches());
             RepoSnapshot.HistorySnap hs = h == null ? null : new RepoSnapshot.HistorySnap(
                     h.refs(), h.maxCommits(), h.allBranches(), h.pathFilter(), h.log(), h.unpushed());
-            org.easygit.core.SnapshotStore.save(repo, new RepoSnapshot(
+            org.easygit.core.SnapshotStore.saveAsync(repo, new RepoSnapshot(
                     RepoSnapshot.CURRENT_VERSION, System.currentTimeMillis(), repo.toString(),
                     st != null ? st.refs() : (h != null ? h.refs() : null), ss, hs));
         } catch (Exception ignored) {
             // 缓存写失败不该影响任何功能
         }
     }
+
+    /** 已经落盘的那份快照的标记(仓库路径 → 状态/历史各自的 savedAt),用来跳过重复写盘。 */
+    private final java.util.Map<String, String> persistedStamps = new java.util.HashMap<>();
 
     /**
      * 历史缓存是否仍然可用:引用指纹 + 条数上限 + 「所有分支」勾选 + 文件筛选全都一致。
@@ -776,8 +855,6 @@ public class MainWindow {
         if (!java.util.Objects.equals(snap.pathFilter(), historyPanel.pathFilter())) return;
         historyPanel.setCommits(snap.log(), snap.unpushed());
     }
-
-    private record HistoryData(List<CommitEntry> log, java.util.Set<String> unpushed) {}
 
     private record LightData(StatusResult st, String refs) {}
 }

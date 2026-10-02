@@ -165,7 +165,11 @@ public final class Fx {
             } catch (Throwable ex) {
                 Platform.runLater(() -> {
                     task.releaseBusy();
-                    UiLog.line("✖ " + (ex.getMessage() == null ? ex.toString() : ex.getMessage()));
+                    // 被切仓取消的刷新不是"失败":它自己就是被丢掉的,别在输出面板刷一行"✖ null"
+                    // (Parallel.both 在中断时抛 CancellationException,见 core/Parallel)
+                    if (!(ex instanceof java.util.concurrent.CancellationException)) {
+                        UiLog.line("✖ " + (ex.getMessage() == null ? ex.toString() : ex.getMessage()));
+                    }
                     if (valid.getAsBoolean()) error("操作失败", ex.getMessage(), null);
                 });
             } finally {
