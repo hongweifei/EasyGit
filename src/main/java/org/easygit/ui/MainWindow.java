@@ -140,6 +140,17 @@ public class MainWindow {
         }));
         poller.setCycleCount(Timeline.INDEFINITE);
         poller.play();
+        // 引用一变就置脏(见 refreshAll/lightRefresh),真正加载推迟到「历史」页可见时。
+        // 用面板自己的加载入口:它会带上文件历史筛选与「所有分支」勾选状态。
+        tabs.getSelectionModel().selectedItemProperty().addListener((o, ov, nv) -> {
+            if (nv == historyTab && historyDirty) {
+                historyDirty = false;
+                historyPanel.refresh();
+            } else if (nv == stashTab && stashDirty) {
+                stashDirty = false;
+                loadStashes(RepoGuard.capture(), RepoManager.get().current());
+            }
+        });
         stage.focusedProperty().addListener((o, ov, nv) -> {
             if (nv) lightRefresh();
         });
@@ -446,10 +457,37 @@ public class MainWindow {
             statusBar.updateLfs(data.lfsUsed, data.lfsCount);
         });
 
-        // 阶段一之二:暂存列表单独一个任务。
-        // JGit 首次打开仓库(类初始化 + 读 config/packed-refs)实测要 1s 上下,原来是塞在
-        // 阶段一里串行执行的 —— 状态栏/变更清单/分支列表全都要等它。挪出来之后
-        // 「界面可用」不再被暂存页签的数据拖住,慢的那一步只影响 Stash 页签自己。
+        // 阶段一之二:暂存列表 —— 同样只在「Stash」页可见时才取。
+        // 首次打开仓库时 JGit 要做类初始化 + 读仓库(实测 ~1.1s,之后 4~9ms),
+        // 而暂存列表是另一个页签的数据:停在「变更」页时没必要为它付这一次。
+        if (stashTab.isSelected()) {
+            loadStashes(guard, repo);
+            stashDirty = false;
+        } else {
+            stashDirty = true;
+        }
+
+        // 阶段二(慢,并行):提交历史 + 未推送标记 —— **只在「历史」页可见时才加载**。
+        // 停在「变更」页时,把 2000 条历史、未推送集合(2 个 git 进程)以及首个提交的差异
+        // 一起算出来是纯浪费:每次切仓/刷新都要付一遍构图 + 列表重建 + 一次 diff。
+        // 引用一变就置脏,用户切到「历史」页时立刻补一次(见构造里的页签监听)。
+        if (historyTab.isSelected()) {
+            loadHistory(guard, repo, allBranches, maxCommits);
+            historyDirty = false;
+        } else {
+            historyDirty = true;
+        }
+    }
+
+    /** 历史页数据是否已失效(切了仓库或引用变了),等用户切到「历史」页再加载。 */
+    private boolean historyDirty = true;
+
+    /** 暂存列表是否已失效,等用户切到「Stash」页再取(见 refreshAll)。 */
+    private boolean stashDirty = true;
+
+    /** 取暂存列表(唯一的消费者是 StashPanel)。 */
+    private void loadStashes(RepoGuard guard, Path repo) {
+        if (repo == null) return;
         Fx.bg("读取暂存列表…", guard, () -> {
             try {
                 return new JGitService(repo).stashList();
@@ -457,8 +495,10 @@ public class MainWindow {
                 return List.<StashEntry>of();
             }
         }, stashPanel::refresh);
+    }
 
-        // 阶段二(慢,并行):提交历史 + 未推送标记
+    /** 加载提交历史 + 未推送标记(唯一的后处理点仍是 HistoryPanel.setCommits)。 */
+    private void loadHistory(RepoGuard guard, Path repo, boolean allBranches, int maxCommits) {
         Fx.bg("读取提交历史…", guard, () -> {
             List<CommitEntry> log = List.of();
             try {
@@ -494,10 +534,12 @@ public class MainWindow {
             }
         }, data -> {
             if (data == null) return;
-            // 引用发生变化(新提交/amend/检出/新分支/远程更新)→ 自动重载历史
+            // 引用发生变化(新提交/amend/检出/新分支/远程更新)→ 重载历史;
+            // 但用户没在看「历史」页时只置脏,别为了看不见的列表起 2 个 git 进程
             if (lastRefsFingerprint == null || !data.refs().equals(lastRefsFingerprint)) {
                 lastRefsFingerprint = data.refs();
-                historyPanel.refresh();
+                if (historyTab.isSelected()) historyPanel.refresh();
+                else historyDirty = true;
             }
             currentStatus = data.st();
             changesPanel.refresh(data.st());
