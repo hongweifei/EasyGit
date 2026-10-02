@@ -182,10 +182,22 @@ public final class Fx {
 
     /** 界面更新失败:记一行日志(输出面板会自动展开)+ 状态栏提示,不弹模态框。 */
     private static void reportUiFailure(String what, Throwable ex) {
-        String msg = ex.getMessage() == null ? ex.toString() : ex.getMessage();
+        String msg = describe(ex);
         ex.printStackTrace();                      // 控制台启动时能拿到完整堆栈
         UiLog.line("✖ " + what + ": " + msg);
         status(what + ": " + msg);
+    }
+
+    /**
+     * 异常的可读描述:**必须带上类型**。
+     * 不带类型时 `NoClassDefFoundError` 只剩一个类名(如 `javafx/scene/control/Alert$1`),
+     * 看日志根本判断不出发生了什么;带上类型一眼就能定位。
+     */
+    static String describe(Throwable ex) {
+        if (ex == null) return "";
+        String m = ex.getMessage();
+        String type = ex.getClass().getSimpleName();
+        return (m == null || m.isBlank()) ? type : type + ": " + m;
     }
 
     /**
@@ -274,8 +286,12 @@ public final class Fx {
     }
 
     public static void error(String title, String message, String detail) {
-        Alert a = errorAlert(title, message, detail);
-        a.showAndWait();
+        try {
+            Alert a = errorAlert(title, message, detail);
+            a.showAndWait();
+        } catch (Throwable t) {
+            dialogFallback("✖", title, message, detail, t);
+        }
     }
 
     /**
@@ -288,11 +304,43 @@ public final class Fx {
             Platform.runLater(() -> errorAsync(title, message, detail));
             return;
         }
-        Alert a = errorAlert(title, message, detail);
-        // Dialog 默认就是 APPLICATION_MODAL,即使 show() 不阻塞调用方,主窗口也会被锁住输入。
-        // 这里显式关掉模态,才能保证"提示归提示,界面照常用"。
-        a.initModality(javafx.stage.Modality.NONE);
-        a.show();
+        try {
+            Alert a = errorAlert(title, message, detail);
+            // Dialog 默认就是 APPLICATION_MODAL,即使 show() 不阻塞调用方,主窗口也会被锁住输入。
+            // 这里显式关掉模态,才能保证"提示归提示,界面照常用"。
+            a.initModality(javafx.stage.Modality.NONE);
+            a.show();
+        } catch (Throwable t) {
+            dialogFallback("✖", title, message, detail, t);
+        }
+    }
+
+    /**
+     * 对话框建不出来时的兜底:把标题/消息/详情写进输出面板与状态栏。
+     *
+     * 这不是臆想的场景:实例 **jar 在运行中被替换** → JVM 懒加载 `Alert$1` 时按旧偏移读新文件,
+     * 抛 `NoClassDefFoundError`,于是"显示错误的窗口"建不起来。而**显示错误失败绝不能把真正的
+     * 错误一起吞掉** —— 当时用户只看到「界面更新失败: javafx/scene/control/Alert$1」,原始报错全丢。
+     * 没有图形环境(无头)时同样走这里。
+     */
+    static void dialogFallback(String icon, String title, String message, String detail, Throwable why) {
+        String msg = (title == null ? "" : title) + "：" + (message == null ? "" : message);
+        String cause = "";
+        if (why != null) {
+            why.printStackTrace();
+            String m = why.getMessage();
+            cause = why.getClass().getSimpleName() + (m == null || m.isBlank() ? "" : "：" + m);
+        }
+        UiLog.line(icon + " " + msg + (cause.isEmpty() ? "" : "（对话框无法显示：" + cause + "）"));
+        if (detail != null && !detail.isBlank()) UiLog.line(detail);
+        // status 会去改状态栏 Label,必须在 FX 线程上;但"派发"这一步本身也可能失败
+        // (没有工具包时 Platform.runLater 直接抛 IllegalStateException)——
+        // 兜底再抛异常就比不兜还糟,所以这里一律吞掉:上面那两行 UiLog 已经把信息留下了
+        try {
+            if (Platform.isFxApplicationThread()) status(msg);
+            else Platform.runLater(() -> status(msg));
+        } catch (Throwable ignored) {
+        }
     }
 
     private static Alert errorAlert(String title, String message, String detail) {
@@ -318,20 +366,30 @@ public final class Fx {
     }
 
     public static void info(String title, String message) {
-        Alert a = new Alert(Alert.AlertType.INFORMATION);
-        icon(a);
-        a.setTitle(title);
-        a.setHeaderText(null);
-        a.setContentText(message);
-        a.showAndWait();
+        try {
+            Alert a = new Alert(Alert.AlertType.INFORMATION);
+            icon(a);
+            a.setTitle(title);
+            a.setHeaderText(null);
+            a.setContentText(message);
+            a.showAndWait();
+        } catch (Throwable t) {
+            dialogFallback("ℹ", title, message, null, t);
+        }
     }
 
     public static boolean confirm(String title, String message) {
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION, message, ButtonType.OK, ButtonType.CANCEL);
-        icon(a);
-        a.setTitle(title);
-        a.setHeaderText(null);
-        Optional<ButtonType> r = a.showAndWait();
-        return r.isPresent() && r.get() == ButtonType.OK;
+        try {
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION, message, ButtonType.OK, ButtonType.CANCEL);
+            icon(a);
+            a.setTitle(title);
+            a.setHeaderText(null);
+            Optional<ButtonType> r = a.showAndWait();
+            return r.isPresent() && r.get() == ButtonType.OK;
+        } catch (Throwable t) {
+            // 弹不出确认框时**必须当作取消**:破坏性操作绝不能在没确认的情况下继续
+            dialogFallback("❓", title, message, null, t);
+            return false;
+        }
     }
 }
