@@ -54,28 +54,62 @@ public final class GitProcess {
     public static int execCount() { return EXEC_COUNT.get(); }
 
     /**
-     * 最近 spawn 的 git 命令(环形缓冲,诊断用)。
+     * 一次 spawn 的记录(环形缓冲,诊断用):**属于哪个仓库、什么命令、起止时刻**。
      *
-     * "为什么这一轮起了 4 个进程、第 4 个是谁"这类问题,光有计数答不了 ——
-     * 直接在探针里打印这段就能看清(别再去猜调用点)。
+     * "为什么这一轮起了 4 个进程、第 4 个是谁"这类问题,光有计数答不了;连续切换仓库时
+     * 还要能回答"这些进程里有多少属于用户只是路过的仓库""两条读取到底并行了没有"——
+     * 所以记录里带上仓库路径与起止时刻(毫秒),探针/用例直接查这段,不用去猜调用点。
      */
-    private static final int RECENT_MAX = 32;
-    private static final String[] RECENT = new String[RECENT_MAX];
+    public static final class Run {
+        /** 命令所在仓库(null 表示与仓库无关的全局命令)。 */
+        public final String repo;
+        public final String cmd;
+        public final long startedAt;
+        private volatile long finishedAt;
+
+        Run(String repo, String cmd, long startedAt) {
+            this.repo = repo;
+            this.cmd = cmd;
+            this.startedAt = startedAt;
+        }
+
+        /** 结束时刻;0 表示还在跑。 */
+        public long finishedAt() { return finishedAt; }
+
+        void finish() { finishedAt = System.currentTimeMillis(); }
+
+        /** 两条命令的运行区间是否真的重叠(用来证明"并行取数"不是嘴上说的)。 */
+        public boolean overlaps(Run other) {
+            long aEnd = finishedAt == 0 ? Long.MAX_VALUE : finishedAt;
+            long bEnd = other.finishedAt == 0 ? Long.MAX_VALUE : other.finishedAt;
+            return startedAt < bEnd && other.startedAt < aEnd;
+        }
+
+        @Override public String toString() {
+            long ms = finishedAt == 0 ? -1 : finishedAt - startedAt;
+            return cmd + "  [" + (repo == null ? "全局" : repo) + "]  " + ms + "ms";
+        }
+    }
+
+    private static final int RECENT_MAX = 64;
+    private static final Run[] RECENT = new Run[RECENT_MAX];
     private static final java.util.concurrent.atomic.AtomicInteger RECENT_N =
             new java.util.concurrent.atomic.AtomicInteger();
 
-    private static void record(String cmd) {
-        RECENT[Math.floorMod(RECENT_N.getAndIncrement(), RECENT_MAX)] = cmd;
+    private static Run record(Path repoDir, List<String> args) {
+        Run r = new Run(repoDir == null ? null : repoDir.toString(),
+                String.join(" ", args), System.currentTimeMillis());
+        RECENT[Math.floorMod(RECENT_N.getAndIncrement(), RECENT_MAX)] = r;
+        return r;
     }
 
-    /** 最近 32 条 git 命令(旧 → 新)。 */
-    public static List<String> recentCommands() {
+    /** 最近 spawn 的 git 命令(旧 → 新,最多 {@value #RECENT_MAX} 条)。 */
+    public static List<Run> recent() {
         int n = Math.min(RECENT_N.get(), RECENT_MAX);
-        List<String> out = new ArrayList<>(n);
+        List<Run> out = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            int idx = Math.floorMod(RECENT_N.get() - n + i, RECENT_MAX);
-            String s = RECENT[idx];
-            if (s != null) out.add(s);
+            Run r = RECENT[Math.floorMod(RECENT_N.get() - n + i, RECENT_MAX)];
+            if (r != null) out.add(r);
         }
         return out;
     }
@@ -126,9 +160,10 @@ public final class GitProcess {
         StringBuilder out = new StringBuilder();
         StringBuilder err = new StringBuilder();
         Process p = null;
+        Run run = null;
         try {
             EXEC_COUNT.incrementAndGet();
-            record(String.join(" ", args));
+            run = record(dir, List.of(args));
             p = pb.start();
             // 子进程 stdin 立刻收到 EOF:任何"读一行输入"的提示都会立即失败而不是永久阻塞。
             // (GUI 里没有终端,这是"拉取后界面卡住"那类问题的根因之一)
@@ -149,6 +184,8 @@ public final class GitProcess {
             return new GitResult(-1, out.toString(), "已被取消");
         } catch (Exception e) {
             return new GitResult(-1, out.toString(), e.getMessage() == null ? e.toString() : e.getMessage());
+        } finally {
+            if (run != null) run.finish();   // 诊断用:记下这一刻,连续切换的归因全靠它
         }
     }
 
