@@ -714,24 +714,30 @@ public final class Dialogs {
         root.getChildren().add(new Label("本仓库: " + (info.repoUses() ? "使用 LFS" : "未使用 LFS(没有 filter=lfs 的跟踪规则)")));
 
         if (info.repoUses()) {
-            long downloaded = info.files().stream().filter(f -> f.downloaded()).count();
-            root.getChildren().add(new Label("LFS 文件: " + info.files().size()
-                    + " 个(完整对象 " + downloaded + " / 仅指针 " + (info.files().size() - downloaded) + ")"));
-            javafx.scene.control.ListView<org.easygit.core.LfsService.LfsFile> files =
-                    new javafx.scene.control.ListView<>();
-            files.setPrefSize(560, 200);
-            files.setCellFactory(v -> new javafx.scene.control.ListCell<>() {
-                @Override
-                protected void updateItem(org.easygit.core.LfsService.LfsFile f, boolean empty) {
-                    super.updateItem(f, empty);
-                    if (empty || f == null) { setGraphic(null); setText(null); return; }
-                    String mark = f.downloaded() ? "● 完整" : "○ 指针";
-                    String size = f.size() >= 0 ? humanSize(f.size()) : "";
-                    setText(mark + "  " + f.path() + (size.isEmpty() ? "" : "  " + size));
-                }
-            });
-            files.getItems().addAll(info.files());
-            root.getChildren().addAll(new Label("LFS 文件:"), files);
+            if (!info.filesMeasured()) {
+                root.getChildren().add(new Label("LFS 文件: 列表没能在超时前读完 —— "
+                        + "git lfs ls-files 自身启动就要 1.6s 起(大仓库或首次运行更久)。"
+                        + "稍后重开本对话框可重试。"));
+            } else {
+                long downloaded = info.files().stream().filter(f -> f.downloaded()).count();
+                root.getChildren().add(new Label("LFS 文件: " + info.files().size()
+                        + " 个(完整对象 " + downloaded + " / 仅指针 " + (info.files().size() - downloaded) + ")"));
+                javafx.scene.control.ListView<org.easygit.core.LfsService.LfsFile> files =
+                        new javafx.scene.control.ListView<>();
+                files.setPrefSize(560, 200);
+                files.setCellFactory(v -> new javafx.scene.control.ListCell<>() {
+                    @Override
+                    protected void updateItem(org.easygit.core.LfsService.LfsFile f, boolean empty) {
+                        super.updateItem(f, empty);
+                        if (empty || f == null) { setGraphic(null); setText(null); return; }
+                        String mark = f.downloaded() ? "● 完整" : "○ 指针";
+                        String size = f.size() >= 0 ? humanSize(f.size()) : "";
+                        setText(mark + "  " + f.path() + (size.isEmpty() ? "" : "  " + size));
+                    }
+                });
+                files.getItems().addAll(info.files());
+                root.getChildren().addAll(new Label("LFS 文件:"), files);
+            }
         }
         if (!info.envText().isBlank()) {
             TextArea env = new TextArea(info.envText());

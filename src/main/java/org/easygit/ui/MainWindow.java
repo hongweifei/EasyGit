@@ -419,7 +419,7 @@ public class MainWindow {
         boolean allBranches = historyPanel.allBranchesSelected();
         int maxCommits = AppSettings.get().maxCommits();
 
-        // 阶段一(快):状态 / 分支+引用指纹 / LFS 缓存状态 —— 让界面先可用
+        // 阶段一(快):状态 / 分支+引用指纹 —— 让界面先可用
         Fx.bg("刷新仓库状态…", guard, () -> {
             StatusResult st;
             NativeGit.RefSnapshot refs;
@@ -432,8 +432,7 @@ public class MainWindow {
                 UiLog.line("✖ 读取仓库状态失败: " + ex.getMessage());
                 return null;
             }
-            int[] lfs = org.easygit.core.LfsService.cachedRepoState(repo); // 命中缓存约 0ms
-            return new RefreshData(st, refs.branches(), refs.fingerprint(), lfs[0] == 1, lfs[1]);
+            return new RefreshData(st, refs.branches(), refs.fingerprint());
         }, data -> {
             refreshingEpoch = -1;
             if (data == null) return;
@@ -454,8 +453,14 @@ public class MainWindow {
             statusBar.updateRepo(repo.toString(), data.status.branch(), data.status.detached(),
                     data.status.ahead(), data.status.behind());
             statusBar.updateCounts(staged, unstaged, untracked, conflicts);
-            statusBar.updateLfs(data.lfsUsed, data.lfsCount);
         });
+
+        // 阶段一之三:LFS 状态单独一个任务。
+        // 只有 status 栏那个 LFS 徽标需要它,而启用 LFS 的仓库光 git lfs ls-files 就要 1.6s 起
+        // (git-lfs 自身启动;大仓库冷启实测 14.9s),串在阶段一里会拖着状态/变更/分支一起等。
+        // 它自己也带时间预算,超时按"数量未知"处理(见 LfsService.lsFilesChecked)。
+        Fx.bg("读取 LFS 状态…", guard, () -> org.easygit.core.LfsService.cachedRepoState(repo),
+                lfs -> statusBar.updateLfs(lfs[0] == 1, lfs[1]));
 
         // 阶段一之二:暂存列表 —— 同样只在「Stash」页可见时才取。
         // 首次打开仓库时 JGit 要做类初始化 + 读仓库(实测 ~1.1s,之后 4~9ms),
@@ -572,8 +577,7 @@ public class MainWindow {
         tab.setOnClosed(e -> view.getChildren().clear());
     }
 
-    private record RefreshData(StatusResult status, List<BranchInfo> branches, String refs,
-                               boolean lfsUsed, int lfsCount) {}
+    private record RefreshData(StatusResult status, List<BranchInfo> branches, String refs) {}
 
     private record HistoryData(List<CommitEntry> log, java.util.Set<String> unpushed) {}
 

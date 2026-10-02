@@ -61,10 +61,14 @@ public class StatusBar extends HBox {
         }, msg -> message.setText(msg));
     }
 
-    /** LFS 使用状态徽标。 */
+    /** LFS 使用状态徽标。count &lt; 0 表示文件数没量出来(git lfs ls-files 超时),不编造 0。 */
     public void updateLfs(boolean used, int count) {
         if (used) {
-            lfsChip.setText("LFS " + count);
+            lfsChip.setText(count < 0 ? "LFS ?" : "LFS " + count);
+            lfsChip.setTooltip(new javafx.scene.control.Tooltip(count < 0
+                    ? "此仓库使用 Git LFS。文件数没能在超时前读完 —— git lfs ls-files 较慢"
+                      + "(大仓库或首次运行),稍后会自动重试。可在「⋯ → Git LFS → LFS 状态」查看。"
+                    : "此仓库使用 Git LFS,数字为 LFS 跟踪的文件数"));
             lfsChip.setVisible(true);
         } else {
             lfsChip.setVisible(false);
