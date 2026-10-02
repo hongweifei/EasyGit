@@ -53,6 +53,33 @@ public final class GitProcess {
     /** 累计已 spawn 的 git 子进程数(诊断)。 */
     public static int execCount() { return EXEC_COUNT.get(); }
 
+    /**
+     * 最近 spawn 的 git 命令(环形缓冲,诊断用)。
+     *
+     * "为什么这一轮起了 4 个进程、第 4 个是谁"这类问题,光有计数答不了 ——
+     * 直接在探针里打印这段就能看清(别再去猜调用点)。
+     */
+    private static final int RECENT_MAX = 32;
+    private static final String[] RECENT = new String[RECENT_MAX];
+    private static final java.util.concurrent.atomic.AtomicInteger RECENT_N =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    private static void record(String cmd) {
+        RECENT[Math.floorMod(RECENT_N.getAndIncrement(), RECENT_MAX)] = cmd;
+    }
+
+    /** 最近 32 条 git 命令(旧 → 新)。 */
+    public static List<String> recentCommands() {
+        int n = Math.min(RECENT_N.get(), RECENT_MAX);
+        List<String> out = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            int idx = Math.floorMod(RECENT_N.get() - n + i, RECENT_MAX);
+            String s = RECENT[idx];
+            if (s != null) out.add(s);
+        }
+        return out;
+    }
+
     /** 是否配置了 core.sshCommand(配置了就不覆盖用户的 ssh 命令)。 */
     private static final Map<String, Boolean> SSH_CMD_CONFIGURED = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -101,6 +128,7 @@ public final class GitProcess {
         Process p = null;
         try {
             EXEC_COUNT.incrementAndGet();
+            record(String.join(" ", args));
             p = pb.start();
             // 子进程 stdin 立刻收到 EOF:任何"读一行输入"的提示都会立即失败而不是永久阻塞。
             // (GUI 里没有终端,这是"拉取后界面卡住"那类问题的根因之一)
