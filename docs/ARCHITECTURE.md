@@ -106,9 +106,16 @@ GUI 没有终端,git 一旦等 stdin 输入就**永久挂起**——界面表现
 6. **用计数锁住它**:`RefreshCostTest` 拿 `GitProcess.execCount()` 的差值断言"未推送集合
    只起 1 个进程""分支+指纹只用 1 次 for-each-ref";探针 `SwitchPerfProbe` 量每次切仓的
    进程数/耗时/FX 卡顿,`StashFlowProbe`/`LazyHistoryProbe` 守住按需加载。
-7. **已知风险**:`git lfs ls-files` 在大工作树上极慢(实测 790MB 仓库、且**没有** LFS 文件时
-   也要 64~72 秒)。它目前只在仓库确实用 LFS 时才调用(`repoUsesLfs`),所以上述仓库不受影响;
-   但 LFS 仓库的刷新会被它拖住,需要时给 `LfsService.lsFiles` 加缓存/超时。
+7. **LFS 检测不许挡刷新**(2026-10-02 修)。`git lfs ls-files` 光 git-lfs 自身启动就要 **~1.6s**
+   (连只有 1 个文件的仓库也一样;790MB 仓库**冷启**实测 14.9s —— 早先记的"64~72 秒"是机器被自己那批
+   探针/JFR 压满时的离群值,warm 复测只有 1.6s,已更正)。做法:
+   ① 只在仓库确实声明 LFS 时才跑(纯读根 `.gitattributes`,不用 LFS 的仓库零进程、零成本);
+   ② 单独一个任务(阶段一之三),不串在阶段一里 —— 探针实测主数据 628ms 就绪、LFS 徽标 2714ms 才出;
+      把调用放回阶段一,主数据要等到 1866ms(负对照);
+   ③ `LfsService.lsFilesChecked` 带 10s 预算,超时按**数量未知**(-1,界面显示 `LFS ?`)而不是编造 0,
+      并把这次结果缓存 10 分钟,免得每逢刷新都去撞慢调用;
+   ④ 一次超时**不能**把 `jsonUnsupported` 置真 —— 那会把偶发抖动变成会话级的 JSON 路径退化。
+   回归:`LfsCostTest`(零进程 / 超时按未知 / 结果缓存 / 不污染 JSON 路径);顺序:`LfsUiProbe`。
 
 ## 五、异步与仓库切换
 
