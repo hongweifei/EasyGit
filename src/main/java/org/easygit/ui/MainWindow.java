@@ -2,7 +2,6 @@ package org.easygit.ui;
 
 import org.easygit.core.AppSettings;
 import org.easygit.core.AppVersion;
-import org.easygit.core.GraphBuilder;
 import org.easygit.core.GitProcess;
 import org.easygit.core.JGitService;
 import org.easygit.core.NativeGit;
@@ -91,6 +90,12 @@ public class MainWindow {
         branchPanel = new BranchPanel(this::refreshAll);
         changesPanel = new ChangesPanel(this::refreshAll, this::openBlame);
         historyPanel = new HistoryPanel(this::refreshAll, this::openBlame);
+        // 面板自己的加载路径(勾选「所有分支」/文件筛选/切到本页)也要记快照,
+        // 否则切回时"没东西可先画"(与阶段一快照同一个教训)。
+        // 指纹由主窗口提供:面板在**发起加载时**取一次,宿主据此判断这份缓存是否仍然有效。
+        historyPanel.setRefsSupplier(() -> lastRefsFingerprint);
+        historyPanel.setOnLoaded((log, unpushed, refsAtLoad) -> rememberHistory(
+                RepoManager.get().current(), log, unpushed, refsAtLoad, AppSettings.get().maxCommits()));
         stashPanel = new StashPanel(this::refreshAll);
         buildRepoUI();
         branchPanel.setActions(this::newBranchAction,
@@ -106,7 +111,11 @@ public class MainWindow {
         pushFlow = new PushFlow(new PushFlow.Host() {
             @Override public void refreshAll() { MainWindow.this.refreshAll(); }
             @Override public void openPushDialog(PushFlow.Preflight pre) {
-                Dialogs.pushDialog(null, MainWindow.this::refreshAll, pre, pullFlow);
+                // 推送对话框里可以增删改远程:刷新前先作废分支面板的"是否有远程"缓存
+                Dialogs.pushDialog(null, () -> {
+                    branchPanel.invalidateRemotesCache();
+                    MainWindow.this.refreshAll();
+                }, pre, pullFlow);
             }
         }, pullFlow);
         headerBar = new HeaderBar(stage, new HeaderBar.Actions() {
@@ -417,6 +426,7 @@ public class MainWindow {
             // 看过的仓库:先用上次的快照把界面填上(stale-while-revalidate),
             // 不用再等 status + for-each-ref 两个进程(实测 350~500ms);后台刷新一到就替换
             paintSnapshot(repo, repoName);
+            paintHistorySnapshot(repo);
         }
 
         boolean allBranches = historyPanel.allBranchesSelected();
@@ -441,6 +451,17 @@ public class MainWindow {
             if (data == null) return;
             applyStatus(repo, data.status, data.branches, data.refs);
             rememberSnapshot(repo, data.status, data.branches, data.refs);
+
+            // 提交历史:这里才拿到新的引用指纹,据此决定要不要重取。
+            // 指纹 / 条数上限 / 「所有分支」/ 文件筛选都没变 ⇒ 缓存就是最新的,**一次 git 都不起**;
+            // 变了才重载(「历史」页可见就立刻重载,不可见只置脏,等切到该页再补)。
+            boolean historyFresh = historyCacheMatches(repo, data.refs, allBranches, maxCommits);
+            if (historyTab.isSelected()) {
+                if (!historyFresh) loadHistory(guard, repo, allBranches, maxCommits);
+                historyDirty = false;
+            } else {
+                historyDirty = !historyFresh;
+            }
         });
 
         // 阶段一之三:LFS 状态单独一个任务。
@@ -460,16 +481,8 @@ public class MainWindow {
             stashDirty = true;
         }
 
-        // 阶段二(慢,并行):提交历史 + 未推送标记 —— **只在「历史」页可见时才加载**。
-        // 停在「变更」页时,把 2000 条历史、未推送集合(2 个 git 进程)以及首个提交的差异
-        // 一起算出来是纯浪费:每次切仓/刷新都要付一遍构图 + 列表重建 + 一次 diff。
-        // 引用一变就置脏,用户切到「历史」页时立刻补一次(见构造里的页签监听)。
-        if (historyTab.isSelected()) {
-            loadHistory(guard, repo, allBranches, maxCommits);
-            historyDirty = false;
-        } else {
-            historyDirty = true;
-        }
+        // 提交历史:**是否重取**的判定挪到阶段一回调里(见上面 applyStatus 之后),
+        // 因为只有那里才拿得到本次刷新的引用指纹 —— 指纹没变就一次 git 都不起。
     }
 
     /** 历史页数据是否已失效(切了仓库或引用变了),等用户切到「历史」页再加载。 */
@@ -490,8 +503,9 @@ public class MainWindow {
         }, stashPanel::refresh);
     }
 
-    /** 加载提交历史 + 未推送标记(唯一的后处理点仍是 HistoryPanel.setCommits)。 */
+    /** 加载提交历史 + 未推送标记(后处理统一在 HistoryPanel.setCommits 里)。 */
     private void loadHistory(RepoGuard guard, Path repo, boolean allBranches, int maxCommits) {
+        final String refsAtLoad = lastRefsFingerprint;
         Fx.bg("读取提交历史…", guard, () -> {
             List<CommitEntry> log = List.of();
             try {
@@ -501,7 +515,7 @@ public class MainWindow {
             }
             return new HistoryData(log, NativeGit.unpushedShas(repo, maxCommits));
         }, data -> {
-            GraphBuilder.build(data.log());
+            rememberHistory(repo, data.log(), data.unpushed(), refsAtLoad, maxCommits);
             historyPanel.setCommits(data.log(), data.unpushed());
         });
     }
@@ -618,6 +632,57 @@ public class MainWindow {
         while (snapshots.size() > SNAPSHOT_MAX) {
             snapshots.remove(snapshots.keySet().iterator().next());
         }
+    }
+
+    /** 一个仓库最近一次的提交历史(含未推送标记、加载时的引用指纹与筛选条件)。 */
+    private record HistorySnapshot(List<CommitEntry> log, Set<String> unpushed, String refs,
+                                   int maxCommits, boolean allBranches, String pathFilter) {}
+
+    /** 记住的提交历史快照(按最近使用排序,上限 4 个仓库 —— 2000 条提交也就几 MB)。 */
+    private final java.util.LinkedHashMap<String, HistorySnapshot> historySnapshots =
+            new java.util.LinkedHashMap<>(16, 0.75f, true);
+    private static final int HISTORY_SNAPSHOT_MAX = 4;
+
+    /** 记一份历史快照。两条加载路径(主窗口整仓刷新、面板自己的刷新)都要走这里。 */
+    private void rememberHistory(Path repo, List<CommitEntry> log, Set<String> unpushed,
+                                 String refs, int maxCommits) {
+        if (repo == null) return;
+        historySnapshots.put(repo.toString(), new HistorySnapshot(log, unpushed, refs, maxCommits,
+                historyPanel.allBranchesSelected(), historyPanel.pathFilter()));
+        while (historySnapshots.size() > HISTORY_SNAPSHOT_MAX) {
+            historySnapshots.remove(historySnapshots.keySet().iterator().next());
+        }
+    }
+
+    /**
+     * 历史缓存是否仍然可用:引用指纹 + 条数上限 + 「所有分支」勾选 + 文件筛选全都一致。
+     *
+     * 历史只由引用决定(工作区改动不影响提交历史),所以指纹一致 ⇒ 这份列表就是最新的,
+     * **一次 git 都不用起**。这就是"有缓存就少取数据"的正确形态:不是增量取,而是不取 ——
+     * 增量取仍然要一个 git 进程(~100ms 起步,这台机器上进程启动就是主要成本),省不出来。
+     */
+    private boolean historyCacheMatches(Path repo, String refs, boolean allBranches, int maxCommits) {
+        HistorySnapshot s = historySnapshots.get(repo.toString());
+        return s != null && refs != null && refs.equals(s.refs())
+                && s.maxCommits() == maxCommits
+                && s.allBranches() == allBranches
+                && java.util.Objects.equals(s.pathFilter(), historyPanel.pathFilter());
+    }
+
+    /**
+     * 切回看过的仓库:先把上次的历史列表画上(与阶段一快照同一套 SWR 思路)。
+     *
+     * 「历史」页是懒加载的,切仓后第一次点进去要等 log + 未推送集合(约 250~500ms)才看到行;
+     * 有快照就先画上,后台刷新一到再替换。
+     *
+     * 勾选状态或文件筛选不同的快照不能画 —— 否则会把"筛选后的历史"当成完整历史显示。
+     */
+    private void paintHistorySnapshot(Path repo) {
+        HistorySnapshot snap = historySnapshots.get(repo.toString());
+        if (snap == null) return;
+        if (snap.allBranches() != historyPanel.allBranchesSelected()) return;
+        if (!java.util.Objects.equals(snap.pathFilter(), historyPanel.pathFilter())) return;
+        historyPanel.setCommits(snap.log(), snap.unpushed());
     }
 
     private record HistoryData(List<CommitEntry> log, java.util.Set<String> unpushed) {}

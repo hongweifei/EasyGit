@@ -173,6 +173,10 @@ public class HistoryPanel extends VBox {
     /** 带未推送标记的注入。默认选中第一条(最新提交);已有选择且仍存在时保持。 */
     public void setCommits(List<CommitEntry> commits, java.util.Set<String> unpushed) {
         unpushedIds = unpushed == null ? java.util.Set.of() : unpushed;
+        // 构图放在这个唯一注入点里:调用方有两处(主窗口的整仓刷新、面板自己的刷新),
+        // 以前是各自调 GraphBuilder.build —— 漏一处就会出现"提交全塌成一条道、merge 不画弯"
+        // (历史页真出过这个 bug)。build 每次从头算 lane/edges,重复调用是幂等的。
+        GraphBuilder.build(commits);
         updateGraphWidth(commits);
         CommitEntry prev = list.getSelectionModel().getSelectedItem();
         list.getItems().setAll(commits);
@@ -239,6 +243,8 @@ public class HistoryPanel extends VBox {
             return;
         }
         final int seq = ++histSeq; // 防止并发的多次加载乱序覆盖
+        // 指纹在**发起时**取:结果可能比它新,但绝不会比它旧,方向上是安全的(宁可多刷一次)
+        final String refsAtLoad = refsSupplier.get();
         Fx.bg("读取提交历史…", guard, () -> {
             List<CommitEntry> log = org.easygit.core.NativeGit.log(r,
                     org.easygit.core.AppSettings.get().maxCommits(),
@@ -250,14 +256,31 @@ public class HistoryPanel extends VBox {
             return new HistoryLoad(log, unpushed);
         }, data -> {
             if (seq != histSeq) return;
-            // 这条路径(勾选「所有分支」/清文件筛选)此前漏了构图:加载出来的
-            // CommitEntry 全是默认值(lane=0、edges 空、hasIncoming=false),
-            // 所有提交塌进一条道、merge 不画弯出、行间断开。与 MainWindow 的
-            // 加载路径保持一致,这里也必须 build。
-            GraphBuilder.build(data.log());
+            // 通知宿主(主窗口据此缓存一份历史快照,供切回本仓库时先上屏)
+            if (onLoaded != null) onLoaded.loaded(data.log(), data.unpushed(), refsAtLoad);
             setCommits(data.log(), data.unpushed());
         });
     }
+
+    /** 加载完成回调(参数:提交列表, 未推送 sha 集合, **发起加载时的引用指纹**)。 */
+    public interface LoadListener {
+        void loaded(List<CommitEntry> log, java.util.Set<String> unpushed, String refsAtLoad);
+    }
+
+    private LoadListener onLoaded;
+    /** 引用指纹的来源(主窗口持有):加载时记下当时的指纹,宿主据此判断缓存是否仍然有效。 */
+    private java.util.function.Supplier<String> refsSupplier = () -> null;
+
+    public void setOnLoaded(LoadListener cb) {
+        this.onLoaded = cb;
+    }
+
+    public void setRefsSupplier(java.util.function.Supplier<String> s) {
+        if (s != null) refsSupplier = s;
+    }
+
+    /** 当前的文件历史筛选路径(null 表示没有筛选)。 */
+    public String pathFilter() { return pathFilter; }
 
     private record HistoryLoad(List<CommitEntry> log, java.util.Set<String> unpushed) {}
 

@@ -235,6 +235,12 @@ public class CommitDetailPanel extends VBox {
             clear();
             return;
         }
+        // 同一个提交不必重载:提交是内容寻址的,sha 相同则消息/文件/差异完全一样。
+        // 这条省掉的正是"每次重载历史都重新选一次首条提交 → 又打一遍 diff(一个 git 进程)"。
+        if (current != null && c.id.equals(current.id)) {
+            current = c;
+            return;
+        }
         current = c;
         selected = null;
         files = List.of();

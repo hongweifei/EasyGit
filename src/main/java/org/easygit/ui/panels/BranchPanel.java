@@ -83,6 +83,15 @@ public class BranchPanel extends VBox {
 
     private static Path repo() { return org.easygit.core.RepoManager.get().current(); }
 
+    /** 「本仓库是否配置了远程」的缓存(键是仓库路径;远程增删改后调用 {@link #invalidateRemotesCache()})。 */
+    private String remotesKnownFor = "";
+    private boolean remotesKnown;
+
+    /** 远程增删改后作废缓存(下一次刷新会重新问 git)。 */
+    public void invalidateRemotesCache() {
+        remotesKnownFor = "";
+    }
+
     public void refresh(List<BranchInfo> branches) {
         TreeItem<TNode> localRoot = node(new TNode("本地分支", TNode.SECTION, null));
         TreeItem<TNode> remoteRoot = node(new TNode("远程分支", TNode.SECTION, null));
@@ -116,8 +125,15 @@ public class BranchPanel extends VBox {
         }
         root.getChildren().add(remoteRoot);
         if (remoteRoot.getChildren().isEmpty()) {
-            boolean hasRemote = !org.easygit.core.NativeGit.remotes(repo()).isEmpty();
-            remoteRoot.getChildren().add(node(new TNode(hasRemote
+            // 「有没有配置远程」这个答案几乎不会变,却每次刷新都要起一个 git remote -v(约 100ms)。
+            // 缓存住:同一个仓库只在第一次查;用户增删改远程后由 invalidateRemotesCache() 作废。
+            Path repoNow = repo();
+            String key = repoNow == null ? "" : repoNow.toString();
+            if (!key.equals(remotesKnownFor)) {
+                remotesKnown = repoNow != null && !org.easygit.core.NativeGit.remotes(repoNow).isEmpty();
+                remotesKnownFor = key;
+            }
+            remoteRoot.getChildren().add(node(new TNode(remotesKnown
                     ? "尚未抓取(可执行抓取或右键管理远程)"
                     : "未配置远程(右键管理远程)", TNode.HINT, null)));
         }
