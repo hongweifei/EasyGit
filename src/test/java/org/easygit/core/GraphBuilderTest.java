@@ -59,6 +59,36 @@ class GraphBuilderTest {
     }
 
     @Test
+    @DisplayName("重复构图幂等:同一份列表 build 两次结果一致")
+    void buildIsIdempotent() {
+        // 构图现在收在 HistoryPanel.setCommits 这个唯一注入点里,而它在"缓存上屏 + 后续新鲜数据"
+        // 这类路径上会被调用两次;build 若不幂等,第二次就会把泳道画乱。
+        List<CommitEntry> log = new ArrayList<>(List.of(
+                c("merge001", "local001 remote01"),
+                c("local001", "base0001"),
+                c("remote01", "base0001"),
+                c("base0001", "")));
+        GraphBuilder.build(log);
+        List<String> first = snapshot(log);
+        GraphBuilder.build(log);
+        assertEquals(first, snapshot(log), "同一份提交列表重复构图必须得到相同结果");
+    }
+
+    private static List<String> snapshot(List<CommitEntry> log) {
+        List<String> out = new ArrayList<>();
+        for (CommitEntry c : log) {
+            StringBuilder sb = new StringBuilder(c.abbr).append(":lane=").append(c.lane)
+                    .append(":in=").append(c.hasIncoming).append(":edges=");
+            List<String> es = new ArrayList<>();
+            for (int[] e : c.edges) es.add(e[0] + "-" + e[1]);
+            java.util.Collections.sort(es);
+            sb.append(es);
+            out.add(sb.toString());
+        }
+        return out;
+    }
+
+    @Test
     @DisplayName("线性历史:一条泳道贯穿,每行都有进入")
     void linear() {
         List<CommitEntry> log = new ArrayList<>(List.of(
