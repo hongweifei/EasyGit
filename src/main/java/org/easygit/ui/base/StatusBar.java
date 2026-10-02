@@ -41,6 +41,7 @@ public class StatusBar extends HBox {
         // 稳定锚点:位置会随忙碌状态变化,探针/样式按 id 找
         message.setId("status-message");
         busyText.setId("status-busy");
+        counts.setId("status-counts");
 
         progress.setPrefSize(16, 16);
         progress.setVisible(false);

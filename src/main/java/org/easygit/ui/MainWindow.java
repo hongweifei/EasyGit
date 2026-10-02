@@ -9,6 +9,7 @@ import org.easygit.core.RepoManager;
 import org.easygit.core.StatusParser.StatusResult;
 import org.easygit.core.model.BranchInfo;
 import org.easygit.core.model.CommitEntry;
+import org.easygit.core.model.RepoSnapshot;
 import org.easygit.core.model.StashEntry;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -220,7 +221,11 @@ public class MainWindow {
         stage.heightProperty().addListener((o, ov, nv) -> {
             if (!stage.isMaximized()) preMaxH = nv.doubleValue();
         });
-        stage.setOnCloseRequest(e -> saveWindowBounds());
+        stage.setOnCloseRequest(e -> {
+            saveWindowBounds();
+            // 关窗前把当前仓库的快照落盘:下次开程序就能先把上次的样子画出来
+            persistSnapshots(RepoManager.get().current());
+        });
         stage.show();
         refreshAll();
     }
@@ -411,6 +416,8 @@ public class MainWindow {
 
         // 切换到不同仓库时:立即清掉上一个仓库的内容与 Blame 页签
         if (!repo.toString().equals(loadedRepoPath)) {
+            // 离开旧仓库前把它的快照落盘(下次重开程序就能先画出来)
+            if (loadedRepoPath != null) persistSnapshots(java.nio.file.Path.of(loadedRepoPath));
             loadedRepoPath = repo.toString();
             lastRefsFingerprint = null;   // 新仓库:下一次轮询强制重载历史
             currentStatus = null;
@@ -428,7 +435,9 @@ public class MainWindow {
             switchHint = "已切换到 " + repoName;
             Fx.status(switchHint);
             // 看过的仓库:先用上次的快照把界面填上(stale-while-revalidate),
-            // 不用再等 status + for-each-ref 两个进程(实测 350~500ms);后台刷新一到就替换
+            // 不用再等 status + for-each-ref 两个进程(实测 350~500ms);后台刷新一到就替换。
+            // 快照来源有两处:本次运行的内存缓存,和上次运行落盘的磁盘快照(重开程序也能立刻上屏)
+            seedSnapshotsFromDisk(repo);
             paintSnapshot(repo, repoName);
             paintHistorySnapshot(repo);
         }
@@ -591,7 +600,7 @@ public class MainWindow {
     private record RefreshData(StatusResult status, List<BranchInfo> branches, String refs) {}
 
     /** 一个仓库最近一次的「阶段一」数据(状态 + 分支 + 引用指纹)。 */
-    private record Snapshot(StatusResult status, List<BranchInfo> branches, String refs) {}
+    private record Snapshot(StatusResult status, List<BranchInfo> branches, String refs, long savedAt) {}
 
     /** 记住的仓库快照(按最近使用排序,超过上限丢最旧的):切回时先上屏用。 */
     private final java.util.LinkedHashMap<String, Snapshot> snapshots =
@@ -630,8 +639,20 @@ public class MainWindow {
         Snapshot snap = snapshots.get(repo.toString());
         if (snap == null) return;
         applyStatus(repo, snap.status(), snap.branches(), snap.refs());
-        switchHint = "已切换到 " + repoName + "（先显示上次快照，正在刷新…）";
+        // 提示里带上"这份快照是多久之前的":持久化之后快照可能来自上一次运行,不说明白就会让人以为界面卡住了
+        switchHint = "已切换到 " + repoName + "（先显示" + ageText(snap.savedAt()) + "的快照，正在刷新…）";
         Fx.status(switchHint);
+    }
+
+    /** 快照年龄的粗粒度说法。 */
+    private static String ageText(long savedAt) {
+        long ms = Math.max(0, System.currentTimeMillis() - savedAt);
+        long min = ms / 60_000;
+        if (min < 1) return "刚刚";
+        if (min < 60) return min + " 分钟前";
+        long h = min / 60;
+        if (h < 24) return h + " 小时前";
+        return (h / 24) + " 天前";
     }
 
     /** 本次切换留下的临时提示(数据到位后要撤掉);null 表示没有。 */
@@ -649,7 +670,7 @@ public class MainWindow {
     }
 
     private void rememberSnapshot(Path repo, StatusResult st, List<BranchInfo> branches, String refs) {
-        snapshots.put(repo.toString(), new Snapshot(st, branches, refs));
+        snapshots.put(repo.toString(), new Snapshot(st, branches, refs, System.currentTimeMillis()));
         while (snapshots.size() > SNAPSHOT_MAX) {
             snapshots.remove(snapshots.keySet().iterator().next());
         }
@@ -657,7 +678,8 @@ public class MainWindow {
 
     /** 一个仓库最近一次的提交历史(含未推送标记、加载时的引用指纹与筛选条件)。 */
     private record HistorySnapshot(List<CommitEntry> log, Set<String> unpushed, String refs,
-                                   int maxCommits, boolean allBranches, String pathFilter) {}
+                                   int maxCommits, boolean allBranches, String pathFilter,
+                                   long savedAt) {}
 
     /** 记住的提交历史快照(按最近使用排序,上限 4 个仓库 —— 2000 条提交也就几 MB)。 */
     private final java.util.LinkedHashMap<String, HistorySnapshot> historySnapshots =
@@ -669,9 +691,58 @@ public class MainWindow {
                                  String refs, int maxCommits) {
         if (repo == null) return;
         historySnapshots.put(repo.toString(), new HistorySnapshot(log, unpushed, refs, maxCommits,
-                historyPanel.allBranchesSelected(), historyPanel.pathFilter()));
+                historyPanel.allBranchesSelected(), historyPanel.pathFilter(), System.currentTimeMillis()));
         while (historySnapshots.size() > HISTORY_SNAPSHOT_MAX) {
             historySnapshots.remove(historySnapshots.keySet().iterator().next());
+        }
+    }
+
+    /**
+     * 从磁盘快照播种内存缓存(只在内存里没有这个仓库时)。
+     *
+     * 这是"持久化"的入口:重开程序后切到某个仓库(或直接启动进它)时,先用上次运行留下的样子把界面画上,
+     * 不必再从空界面等一轮 git。加载不出任何东西(没有、损坏、过期、版本不符)就照常走刷新。
+     */
+    private void seedSnapshotsFromDisk(Path repo) {
+        if (repo == null) return;
+        if (snapshots.containsKey(repo.toString()) || historySnapshots.containsKey(repo.toString())) return;
+        var saved = org.easygit.core.SnapshotStore.load(repo);
+        if (saved.isEmpty()) return;
+        var ps = saved.get();
+        var st = ps.status();
+        if (st != null) {
+            snapshots.put(repo.toString(), new Snapshot(
+                    new StatusResult(st.oid(), st.branch(), st.upstream(), st.detached(),
+                            st.ahead(), st.behind(), st.changes()),
+                    st.branches() == null ? List.of() : st.branches(), ps.refs(), ps.savedAt()));
+        }
+        var h = ps.history();
+        if (h != null && h.log() != null && !h.log().isEmpty()) {
+            historySnapshots.put(repo.toString(), new HistorySnapshot(h.log(), h.unpushed(), h.refs(),
+                    h.maxCommits(), h.allBranches(), h.pathFilter(), ps.savedAt()));
+        }
+    }
+
+    /**
+     * 把某个仓库的内存快照落盘(重新打开程序时用它先上屏)。
+     * 只在"离开这个仓库"和"关窗"时写:写入是有成本的文件 IO,不需要每次刷新都写。
+     */
+    private void persistSnapshots(Path repo) {
+        if (repo == null) return;
+        Snapshot st = snapshots.get(repo.toString());
+        HistorySnapshot h = historySnapshots.get(repo.toString());
+        if (st == null && h == null) return;
+        try {
+            RepoSnapshot.StatusSnap ss = st == null ? null : new RepoSnapshot.StatusSnap(
+                    st.status().oid(), st.status().branch(), st.status().upstream(), st.status().detached(),
+                    st.status().ahead(), st.status().behind(), st.status().changes(), st.branches());
+            RepoSnapshot.HistorySnap hs = h == null ? null : new RepoSnapshot.HistorySnap(
+                    h.refs(), h.maxCommits(), h.allBranches(), h.pathFilter(), h.log(), h.unpushed());
+            org.easygit.core.SnapshotStore.save(repo, new RepoSnapshot(
+                    RepoSnapshot.CURRENT_VERSION, System.currentTimeMillis(), repo.toString(),
+                    st != null ? st.refs() : (h != null ? h.refs() : null), ss, hs));
+        } catch (Exception ignored) {
+            // 缓存写失败不该影响任何功能
         }
     }
 
