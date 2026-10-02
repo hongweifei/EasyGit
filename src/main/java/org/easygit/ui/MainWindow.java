@@ -126,11 +126,27 @@ public class MainWindow {
 
         RepoManager.get().addListener(repo -> requestRefresh());
 
-        // 轻量自动刷新:每 5 秒刷新工作区状态
-        Timeline poller = new Timeline(new KeyFrame(Duration.seconds(5), e -> lightRefresh()));
+        // 轻量自动刷新:每 5 秒刷新工作区状态。
+        // 窗口不在前台时降到 15 秒一次:一轮轮询要起 2 个 git 进程(指纹 + status),
+        // 用户没在看的时候纯属白烧磁盘和 CPU,还会跟当前前台的应用抢 IO。
+        // 回到前台立刻刷一次,所以降频不会让用户看到过期数据。
+        Timeline poller = new Timeline(new KeyFrame(Duration.seconds(5), e -> {
+            if (stage.isFocused()) {
+                idleTicks = 0;
+                lightRefresh();
+            } else if (++idleTicks % 3 == 0) {
+                lightRefresh();
+            }
+        }));
         poller.setCycleCount(Timeline.INDEFINITE);
         poller.play();
+        stage.focusedProperty().addListener((o, ov, nv) -> {
+            if (nv) lightRefresh();
+        });
     }
+
+    /** 窗口不在前台时累计的轮询节拍(每 3 拍才刷一次)。 */
+    private int idleTicks;
 
     /** 欢迎页(每次重建,保证最近仓库列表是最新的)。 */
     private VBox buildWelcome() {
@@ -392,37 +408,30 @@ public class MainWindow {
         boolean allBranches = historyPanel.allBranchesSelected();
         int maxCommits = AppSettings.get().maxCommits();
 
-        // 阶段一(快):状态 / 分支 / stash / LFS 缓存状态 —— 让界面先可用
+        // 阶段一(快):状态 / 分支+引用指纹 / LFS 缓存状态 —— 让界面先可用
         Fx.bg("刷新仓库状态…", guard, () -> {
             StatusResult st;
-            List<BranchInfo> branches;
+            NativeGit.RefSnapshot refs;
             try {
                 st = NativeGit.status(repo);
-                branches = NativeGit.branches(repo);
+                // 分支列表与引用指纹共用一次 for-each-ref:两个进程并一个(见 NativeGit.refSnapshot)
+                refs = NativeGit.refSnapshot(repo);
             } catch (Exception ex) {
                 // 后台刷新失败不打扰用户,仅记录输出面板
                 UiLog.line("✖ 读取仓库状态失败: " + ex.getMessage());
                 return null;
             }
-            List<StashEntry> stashes;
-            try {
-                stashes = new JGitService(repo).stashList();
-            } catch (Exception e) {
-                stashes = List.of();
-            }
             int[] lfs = org.easygit.core.LfsService.cachedRepoState(repo); // 命中缓存约 0ms
-            String head = NativeGit.headSha(repo);
-            return new RefreshData(st, branches, stashes, lfs[0] == 1, lfs[1], head);
+            return new RefreshData(st, refs.branches(), refs.fingerprint(), lfs[0] == 1, lfs[1]);
         }, data -> {
             refreshingEpoch = -1;
             if (data == null) return;
             // 整仓刷新已经重载过历史,顺手把指纹对齐,免得下一拍轮询再白刷一次
-            lastRefsFingerprint = NativeGit.refsFingerprint(repo);
+            lastRefsFingerprint = data.refs;
             currentStatus = data.status;
             snapshotBranches = data.branches;
             changesPanel.refresh(data.status);
             branchPanel.refresh(data.branches);
-            stashPanel.refresh(data.stashes);
 
             int staged = 0, unstaged = 0, untracked = 0, conflicts = 0;
             for (var f : data.status.changes()) {
@@ -436,6 +445,18 @@ public class MainWindow {
             statusBar.updateCounts(staged, unstaged, untracked, conflicts);
             statusBar.updateLfs(data.lfsUsed, data.lfsCount);
         });
+
+        // 阶段一之二:暂存列表单独一个任务。
+        // JGit 首次打开仓库(类初始化 + 读 config/packed-refs)实测要 1s 上下,原来是塞在
+        // 阶段一里串行执行的 —— 状态栏/变更清单/分支列表全都要等它。挪出来之后
+        // 「界面可用」不再被暂存页签的数据拖住,慢的那一步只影响 Stash 页签自己。
+        Fx.bg("读取暂存列表…", guard, () -> {
+            try {
+                return new JGitService(repo).stashList();
+            } catch (Exception e) {
+                return List.<StashEntry>of();
+            }
+        }, stashPanel::refresh);
 
         // 阶段二(慢,并行):提交历史 + 未推送标记
         Fx.bg("读取提交历史…", guard, () -> {
@@ -509,8 +530,8 @@ public class MainWindow {
         tab.setOnClosed(e -> view.getChildren().clear());
     }
 
-    private record RefreshData(StatusResult status, List<BranchInfo> branches,
-                               List<StashEntry> stashes, boolean lfsUsed, int lfsCount, String head) {}
+    private record RefreshData(StatusResult status, List<BranchInfo> branches, String refs,
+                               boolean lfsUsed, int lfsCount) {}
 
     private record HistoryData(List<CommitEntry> log, java.util.Set<String> unpushed) {}
 
