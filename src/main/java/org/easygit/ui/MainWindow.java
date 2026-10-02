@@ -47,6 +47,7 @@ import org.easygit.ui.panels.StashPanel;
 import org.easygit.ui.panels.OutputPanel;
 import org.easygit.ui.views.BlameView;
 import org.easygit.ui.panels.PullFlow;
+import org.easygit.ui.panels.PushFlow;
 import org.easygit.ui.dialogs.Dialogs;
 import org.easygit.ui.dialogs.SettingsDialog;
 
@@ -74,6 +75,7 @@ public class MainWindow {
     private final OutputPanel outputPanel;
     private final HeaderBar headerBar;
     private final PullFlow pullFlow;
+    private final PushFlow pushFlow;
     /** 未打开仓库时内容区显示的欢迎页;每次回到该状态时重建(仓库列表可能已变)。 */
     private VBox welcome;
     private VBox leftBox;
@@ -101,9 +103,15 @@ public class MainWindow {
             @Override public void refreshAll() { MainWindow.this.refreshAll(); }
             @Override public void showChangesTab() { tabs.getSelectionModel().select(0); }
         });
+        pushFlow = new PushFlow(new PushFlow.Host() {
+            @Override public void refreshAll() { MainWindow.this.refreshAll(); }
+            @Override public void openPushDialog(PushFlow.Preflight pre) {
+                Dialogs.pushDialog(null, MainWindow.this::refreshAll, pre, pullFlow);
+            }
+        }, pullFlow);
         headerBar = new HeaderBar(stage, new HeaderBar.Actions() {
             @Override public void pull() { pullFlow.pull(); }
-            @Override public void push() { Dialogs.pushDialog(null, MainWindow.this::refreshAll); }
+            @Override public void push() { pushFlow.push(); }
             @Override public void refresh() { MainWindow.this.refreshAll(); }
             @Override public void fetch() { fetchNow(); }
             @Override public void blame() { blamePrompt(); }

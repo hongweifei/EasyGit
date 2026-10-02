@@ -43,13 +43,19 @@ public final class PullFlow {
      *  - 被本地未提交改动挡住 → 询问后暂存、重试、自动恢复;
      *  - 冲突/网络/凭据等失败 → 中文提示 + 下一步建议。
      */
-    public void pull() {
+    public void pull() { pull(null); }
+
+    /**
+     * 拉取,完成后执行 onSuccess(如「拉取后再推送」的链接动作)。
+     * 只有拉取成功(含"已是最新")才会触发;产生冲突或失败时不触发。
+     */
+    public void pull(Runnable onSuccess) {
         Path repo = RepoManager.get().current();
         if (repo == null) return;
-        Fx.bg("获取远程更新…", () -> NativeGit.pullPlan(repo), this::onPlan);
+        Fx.bg("获取远程更新…", () -> NativeGit.pullPlan(repo), plan -> onPlan(plan, onSuccess));
     }
 
-    private void onPlan(PullPlan plan) {
+    private void onPlan(PullPlan plan, Runnable onSuccess) {
         if (plan.error() != null) {
             Fx.error("拉取失败", NativeGit.friendlyError(plan.error()), plan.error());
             return;
@@ -68,13 +74,14 @@ public final class PullFlow {
         if (plan.behind() == 0) {
             Fx.status("拉取完成:已是最新");
             host.refreshAll();
+            if (onSuccess != null) onSuccess.run();
             return;
         }
         Path repo = RepoManager.get().current();
         if (repo == null) return;
         if (plan.ahead() == 0) {
             // 纯快进:本地没有额外提交,不该产生合并提交
-            runStep(repo, "拉取中…", "拉取", () -> NativeGit.mergeUpstreamFfOnly(repo));
+            runStep(repo, "拉取中…", "拉取", () -> NativeGit.mergeUpstreamFfOnly(repo), onSuccess);
             return;
         }
         String mode = Dialogs.pullStrategy(plan.ahead(), plan.behind(), plan.dirty());
@@ -82,24 +89,24 @@ public final class PullFlow {
         boolean rebase = "rebase".equals(mode);
         String name = rebase ? "变基拉取" : "合并拉取";
         runStep(repo, name + "…", name,
-                () -> rebase ? NativeGit.rebaseOntoUpstream(repo) : NativeGit.mergeUpstream(repo));
+                () -> rebase ? NativeGit.rebaseOntoUpstream(repo) : NativeGit.mergeUpstream(repo), onSuccess);
     }
 
     /** 执行合并/变基那一步,并把结果翻译成用户能懂的状态。 */
     private void runStep(Path repo, String busy, String name,
-                         java.util.function.Supplier<GitProcess.GitResult> step) {
+                         java.util.function.Supplier<GitProcess.GitResult> step, Runnable onSuccess) {
         Fx.bg(busy, () -> NativeGit.runPullStep(repo, step), res -> {
             GitProcess.GitResult r = res.result();
             UiLog.op("git " + name + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
             if (r.ok()) {
-                reportDone(name, res.incoming(), res.conflicts());
+                reportDone(name, res.incoming(), res.conflicts(), onSuccess);
                 return;
             }
             if (NativeGit.isLocalObstruction(r.message())) {
                 if (Fx.confirm(name + "被本地改动挡住",
                         "本地未提交的改动会被覆盖,git 拒绝了本次" + name + "。\n\n"
                                 + "先暂存(stash)这些改动,重试" + name + ",成功后再自动恢复?")) {
-                    retryWithStash(repo, name, step);
+                    retryWithStash(repo, name, step, onSuccess);
                 }
                 return;
             }
@@ -114,7 +121,7 @@ public final class PullFlow {
 
     /** 暂存本地改动 → 重试拉取 → 自动恢复改动。 */
     private void retryWithStash(Path repo, String name,
-                                java.util.function.Supplier<GitProcess.GitResult> step) {
+                                java.util.function.Supplier<GitProcess.GitResult> step, Runnable onSuccess) {
         Fx.bg("暂存改动并重试…", () -> NativeGit.stashRetryPull(repo, name, step), res -> {
             if (res.stashError() != null) {
                 Fx.error("暂存失败", NativeGit.friendlyError(res.stashError()), res.stashError());
@@ -132,13 +139,13 @@ public final class PullFlow {
                 host.refreshAll();
                 return;
             }
-            reportDone(name, res.incoming(), res.conflicts());
+            reportDone(name, res.incoming(), res.conflicts(), onSuccess);
             Fx.status("本地改动已恢复");
         });
     }
 
     /** 拉取成功后的状态栏文案 + 冲突引导。 */
-    private void reportDone(String name, int incoming, int conflicts) {
+    private void reportDone(String name, int incoming, int conflicts, Runnable onSuccess) {
         if (conflicts > 0) {
             Fx.status(name + "完成,但有 " + conflicts + " 个文件冲突,请到「变更」页解决");
             UiLog.line("⚠ " + name + " 产生 " + conflicts + " 个冲突文件");
@@ -151,5 +158,6 @@ public final class PullFlow {
             Fx.status(name + "完成");
         }
         host.refreshAll();
+        if (onSuccess != null) onSuccess.run();
     }
 }

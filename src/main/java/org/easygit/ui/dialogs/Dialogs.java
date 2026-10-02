@@ -3,6 +3,7 @@ package org.easygit.ui.dialogs;
 import org.easygit.core.NativeGit;
 import org.easygit.core.RepoManager;
 import org.easygit.core.model.BranchInfo;
+import org.easygit.core.model.PushPlan;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -262,10 +263,40 @@ public final class Dialogs {
         return d.showAndWait().orElse(null);
     }
 
+    /** 推送分叉预警:远端有别人推的新提交。返回 "pull"(先拉取) / "force"(强制覆盖) / null(取消)。 */
+    public static String pushDiverged(int ahead, int behind) {
+        Dialog<String> d = new Dialog<>();
+        Fx.icon(d);
+        d.setTitle("推送方式");
+        d.setHeaderText("远端已有 " + behind + " 个新提交,本地有 " + ahead + " 个提交待推送");
+        Label body = new Label("直接推送会被 git 拒绝(会覆盖别人的提交)。\n\n"
+                + "拉取后再推送:把远端的新提交合并/变基进来,再推你的提交(推荐)。\n"
+                + "强制推送:用本地历史覆盖远端,远端上那 " + behind
+                + " 个提交会被丢弃(仅确认没人用时使用)。");
+        body.setWrapText(true);
+        body.setMaxWidth(420);
+        VBox root = new VBox(8, body);
+        root.setPadding(new Insets(8));
+        d.getDialogPane().setContent(root);
+        ButtonType pull = new ButtonType("拉取后再推送", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+        ButtonType force = new ButtonType("强制推送", javafx.scene.control.ButtonBar.ButtonData.APPLY);
+        ButtonType cancel = new ButtonType("取消", javafx.scene.control.ButtonBar.ButtonData.CANCEL_CLOSE);
+        d.getDialogPane().getButtonTypes().addAll(pull, force, cancel);
+        d.setResultConverter(bt -> bt == pull ? "pull" : bt == force ? "force" : null);
+        return d.showAndWait().orElse(null);
+    }
+
     // ---------- 推送到指定远程 ----------
 
-    /** 推送对话框:任选本地分支 + 任选远程,可选设置上游/强制。defaultBranch 为 null 时自动选中当前分支。 */
-    public static void pushDialog(String defaultBranch, Runnable refreshAll) {
+    /**
+     * 推送对话框:任选本地分支 + 任选远程,可选设置上游/强制。defaultBranch 为 null 时自动选中当前分支。
+     *
+     * pre/pullFlow 由「推送」按钮的一键流程传入:pre 携带预探测结果(状态标签直接显示),
+     * pullFlow 用于分叉时的「拉取后再推送」链接。其它入口(分支右键)传 null,对话框自己算状态。
+     */
+    public static void pushDialog(String defaultBranch, Runnable refreshAll,
+                                  org.easygit.ui.panels.PushFlow.Preflight pre,
+                                  org.easygit.ui.panels.PullFlow pullFlow) {
         Path repo = RepoManager.get().current();
         if (repo == null) {
             Fx.info("推送", "请先打开仓库");
@@ -273,13 +304,22 @@ public final class Dialogs {
         }
         java.util.List<BranchInfo> locals;
         java.util.Map<String, String> remotes;
-        try {
+        if (pre != null) {
+            locals = pre.locals();
+            remotes = pre.remotes();
+            if (pre.detached()) {
+                Fx.info("推送", "当前处于游离 HEAD(detached)状态。\n请先检出要推送的分支,再推送。");
+                return;
+            }
+        } else {
+            try {
             locals = NativeGit.branches(repo).stream()
                     .filter(b -> b.kind == BranchInfo.Kind.LOCAL).toList();
             remotes = NativeGit.remotes(repo);
         } catch (Exception ex) {
             Fx.error("推送", "读取分支/远程失败: " + ex.getMessage(), null);
             return;
+            }
         }
         if (locals.isEmpty()) {
             Fx.info("推送", "仓库还没有本地分支");
@@ -309,10 +349,10 @@ public final class Dialogs {
             }
             @Override public BranchInfo fromString(String s) { return null; }
         });
-        BranchInfo pre = defaultBranch != null
+        BranchInfo preBranch = defaultBranch != null
                 ? locals.stream().filter(b -> b.name.equals(defaultBranch)).findFirst().orElse(null) : null;
         BranchInfo cur = locals.stream().filter(b -> b.current).findFirst().orElse(null);
-        branchCombo.getSelectionModel().select(pre != null ? pre : cur);
+        branchCombo.getSelectionModel().select(preBranch != null ? preBranch : cur);
 
         ComboBox<String> remoteCombo = new ComboBox<>(FXCollections.observableArrayList(remotes.keySet()));
         remoteCombo.setPrefWidth(300);
@@ -341,14 +381,41 @@ public final class Dialogs {
         HBox.setHgrow(remoteCombo, Priority.ALWAYS);
 
         CheckBox setUpstream = new CheckBox("设置上游(推送后跟踪该远程分支)");
-        CheckBox force = new CheckBox("强制推送(--force-with-lease,覆盖远程)");
+        CheckBox force = new CheckBox("强制推送(--force-with-lease,覆盖远端)");
         setUpstream.setSelected(branchCombo.getValue() != null && branchCombo.getValue().upstream == null);
-        branchCombo.valueProperty().addListener((o, ov, nv) -> {
-            if (nv != null) setUpstream.setSelected(nv.upstream == null);
-        });
+
+        // 状态标签:随分支选择显示 领先/落后/分叉,让"强推覆盖"的决策有依据
+        Label statusLabel = new Label();
+        statusLabel.setWrapText(true);
+        statusLabel.getStyleClass().add("dim");
+        statusLabel.setMaxWidth(430);
+        final PushPlan[] latestPlan = {null};
+        Runnable updateStatus = () -> {
+            BranchInfo b = branchCombo.getValue();
+            if (b == null) { statusLabel.setText(""); latestPlan[0] = null; return; }
+            statusLabel.setText("读取分支状态…");
+            Fx.bg("读取分支状态…", () -> NativeGit.pushPlan(repo, b.name), plan -> {
+                if (branchCombo.getValue() == null
+                        || !branchCombo.getValue().name.equals(plan.branch())) return; // 选择已变,丢弃
+                latestPlan[0] = plan;
+                if (plan.noUpstream()) {
+                    setUpstream.setSelected(true);
+                    statusLabel.setText("该分支还没有上游,推送时将自动建立(origin/" + plan.branch() + ")");
+                } else if (plan.synced()) {
+                    statusLabel.setText("已与远端同步,没有需要推送的提交");
+                } else if (plan.diverged()) {
+                    statusLabel.setText("⚠ 远端有 " + plan.behind() + " 个新提交,本地有 " + plan.ahead()
+                            + " 个待推送:直接推送会被拒绝。\n可勾选「强制推送」覆盖远端,或取消后先「拉取」。");
+                } else {
+                    statusLabel.setText("本地领先远端 " + plan.ahead() + " 个提交,可直接推送");
+                }
+            });
+        };
+        branchCombo.valueProperty().addListener((o, ov, nv) -> updateStatus.run());
 
         VBox root = new VBox(8,
                 new Label("要推送的分支:"), branchCombo,
+                statusLabel,
                 new Label("目标远程:"), remoteRow,
                 setUpstream, force);
         root.setPadding(new Insets(8));
@@ -361,16 +428,28 @@ public final class Dialogs {
             String remote = remoteCombo.getValue();
             if (b == null || remote == null) return;
             boolean su = setUpstream.isSelected(), fc = force.isSelected();
-            Fx.bg("推送中…", () -> NativeGit.pushTo(repo, b.name, remote, su, fc), r -> {
-                UiLog.op("git push" + (fc ? " --force-with-lease" : "") + " " + b.name + " → " + remote
-                        + (r.ok() ? " ✓" : " ✖"), r.out(), r.err());
-                if (r.ok()) {
-                    Fx.status("已推送 " + b.name + " → " + remote + (su ? "(已设为上游)" : ""));
-                    refreshAll.run();
-                } else {
-                    Fx.error("推送失败", r.message(), null);
+
+            org.easygit.ui.panels.PushFlow flow = new org.easygit.ui.panels.PushFlow(
+                    new org.easygit.ui.panels.PushFlow.Host() {
+                        @Override public void refreshAll() { refreshAll.run(); }
+                        @Override public void openPushDialog(org.easygit.ui.panels.PushFlow.Preflight p) { }
+                    }, pullFlow);
+            // 分叉且未勾强制:先弹预警分流(拉取后再推 / 强制覆盖 / 取消)。
+            // 优先用状态标签算好的 plan(打开对话框时已算);选择没变就直接用。
+            PushPlan plan = latestPlan[0] != null && latestPlan[0].branch().equals(b.name)
+                    ? latestPlan[0] : NativeGit.pushPlan(repo, b.name);
+            if (plan.diverged() && !fc) {
+                String choice = pushDiverged(plan.ahead(), plan.behind());
+                if (choice == null) return;
+                if ("force".equals(choice)) { flow.execute(repo, b.name, remote, su, true); return; }
+                if (pullFlow != null) {
+                    pullFlow.pull(() -> flow.execute(repo, b.name, remote, su, false));
+                    return;
                 }
-            });
+                Fx.info("建议先拉取", "远端有新提交,先「拉取」合并后再推送。");
+                return;
+            }
+            flow.execute(repo, b.name, remote, su, fc);
         });
     }
 

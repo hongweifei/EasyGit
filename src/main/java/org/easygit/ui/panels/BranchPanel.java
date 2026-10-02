@@ -272,7 +272,7 @@ public class BranchPanel extends VBox {
                         });
                     }
                 }),
-                mi("推送到指定远程…", () -> Dialogs.pushDialog(b.name, refreshAll)),
+                mi("推送到指定远程…", () -> Dialogs.pushDialog(b.name, refreshAll, null, null)),
                 mi("重命名…", () -> {
                     String newName = Dialogs.askText("重命名分支", "新分支名:", b.name);
                     if (newName != null && !newName.isBlank() && !newName.equals(b.name)) {
