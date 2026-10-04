@@ -1,5 +1,6 @@
 package org.easygit.core;
 
+import org.easygit.core.StatusParser.StatusResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -179,6 +180,53 @@ class RefreshCostTest {
         StringBuilder sb = new StringBuilder();
         for (GitProcess.Run r : GitProcess.recent()) sb.append("  ").append(r).append('\n');
         return sb.toString();
+    }
+
+    // ---------- 历史指纹按模式收窄(见 NativeGit.headFingerprint)----------
+
+    @Test
+    @DisplayName("非「所有分支」的历史指纹:一个进程都不用起(status 自带)")
+    void headFingerprintCostsNothing() {
+        StatusResult st = NativeGit.status(work);
+        int before = GitProcess.execCount();
+        String fp = NativeGit.headFingerprint(st);
+        assertEquals(0, GitProcess.execCount() - before, "指纹必须从 status 结果直接推导,不起进程");
+        assertTrue(fp.startsWith(st.oid()) && !st.oid().isEmpty(), "指纹要含 HEAD 的 oid: " + fp);
+    }
+
+    @Test
+    @DisplayName("提交(HEAD 移动)时指纹跟着变 —— 否则历史页不会自动刷新")
+    void headFingerprintTracksCommit() throws Exception {
+        String before = NativeGit.headFingerprint(NativeGit.status(work));
+        Files.writeString(work.resolve("c.txt"), "x\n");
+        commit(work, "head-fp-1");
+        String after = NativeGit.headFingerprint(NativeGit.status(work));
+        assertNotEquals(before, after, "提交后指纹必须变化");
+    }
+
+    @Test
+    @DisplayName("建分支/打标签不动 HEAD → 指纹不变;同一次改动对「所有分支」模式是信号")
+    void headFingerprintIgnoresSideRefs() throws Exception {
+        String headBefore = NativeGit.headFingerprint(NativeGit.status(work));
+        String allBefore = NativeGit.refsFingerprint(work);
+        git(work, "branch", "side-fp");
+        git(work, "tag", "tag-fp");
+        assertEquals(headBefore, NativeGit.headFingerprint(NativeGit.status(work)),
+                "建分支/打标签不影响 HEAD,平时的指纹必须不变(否则整份重载白跑)");
+        assertNotEquals(allBefore, NativeGit.refsFingerprint(work),
+                "同一次改动对「所有分支」模式是信号 —— 两种模式盯的东西不同,格式不能混用");
+    }
+
+    @Test
+    @DisplayName("上游移动(推送后 ahead 归零)指纹也变 —— 未推送标记要靠它重算")
+    void headFingerprintTracksUpstreamMove() throws Exception {
+        Files.writeString(work.resolve("u.txt"), "x\n");
+        commit(work, "unpushed-1");   // 先制造一个未推送的提交(ahead 1)
+        String before = NativeGit.headFingerprint(NativeGit.status(work));
+        assertTrue(before.endsWith("|1|0"), "前置:应有 1 个未推送提交: " + before);
+        git(work, "push", "-q", "origin", "master");   // 上游前进 → ahead 归 0
+        String after = NativeGit.headFingerprint(NativeGit.status(work));
+        assertNotEquals(before, after, "上游移动后指纹必须变化(否则历史里的 ↑ 标记不会刷新)");
     }
 
     // ---------- git 夹具 ----------
