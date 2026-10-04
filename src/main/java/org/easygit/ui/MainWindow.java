@@ -618,7 +618,9 @@ public class MainWindow {
         Path repo = guard.repo();
         if (repo == null) return;
         boolean allBranches = historyPanel.allBranchesSelected();
-        Fx.bg("刷新状态…", guard, () -> {
+        // 轮询是用户没有发起的动作,**静默**跑(Fx.bgQuiet):每 5 秒闪一次「刷新状态…」是噪声。
+        // 真的发现了变化,后续的历史重载会用普通任务亮起来。
+        Fx.bgQuiet(guard, () -> {
             try {
                 if (allBranches) {
                     // 「所有分支」:侧支/远程分支的新提交不动 HEAD,得盯全部引用;

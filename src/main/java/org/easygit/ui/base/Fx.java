@@ -47,15 +47,26 @@ public final class Fx {
      */
     private static final class BgTask {
         final RepoGuard guard;
+        /** 是否在状态栏点灯(周期性的后台杂活不点,见 {@link #bgQuiet})。 */
+        final boolean tracked;
         final java.util.concurrent.atomic.AtomicBoolean busyReleased =
                 new java.util.concurrent.atomic.AtomicBoolean();
         volatile Future<?> future;
-        BgTask(RepoGuard guard) { this.guard = guard; }
-        void releaseBusy() { if (busyReleased.compareAndSet(false, true)) busyEnd(); }
+        volatile String label;
+        BgTask(RepoGuard guard, boolean tracked) { this.guard = guard; this.tracked = tracked; }
+        void releaseBusy() { if (busyReleased.compareAndSet(false, true) && tracked) busyEnd(this); }
     }
 
     /** 忙碌指示的并发深度:连续切换仓库时多个刷新会重叠,谁先结束都不能提前熄灯。 */
     private static final AtomicInteger BUSY_DEPTH = new AtomicInteger();
+
+    /**
+     * 还在跑的点灯任务(**按提交顺序**)。忙碌文案必须永远指向"还在跑的任务"——
+     * 原来是单变量被后来者覆盖,先结束的任务的文案会一直挂到全部结束为止:
+     * 切仓后整个取数期间显示的都是「读取 LFS 状态…」(它几毫秒就跑完了,
+     * 真正耗时的状态取数反倒没有名字)。只有 FX 线程会增删它。
+     */
+    private static final java.util.Deque<BgTask> ACTIVE = new java.util.concurrent.ConcurrentLinkedDeque<>();
 
     // 诊断计数:切换仓库的优化是否真的生效,靠这三个数看(探针/问题定位用)
     private static final AtomicInteger SCHEDULED = new AtomicInteger();
@@ -136,6 +147,23 @@ public final class Fx {
     }
 
     /**
+     * 周期性后台杂活的**静默**版:不进状态栏、不点亮转圈,其余语义与 {@link #bg} 完全一致。
+     *
+     * 5 秒轮询是用户没有发起的动作,每拍闪一下「刷新状态…」是噪声(实测 12 秒里转圈亮 2 次);
+     * 真的发现了变化,后续的取数(如历史重载)会用普通任务亮起来,该看见的时候照样看得见。
+     */
+    public static <T> void bgQuiet(RepoGuard guard, Supplier<T> work, Consumer<T> onDone) {
+        if (guard.stale()) {
+            SKIPPED.incrementAndGet();
+            return;
+        }
+        submit(null, guard,
+                () -> guard.stale() ? null : work.get(),
+                result -> { if (!guard.stale()) onDone.accept(result); },
+                () -> !guard.stale());
+    }
+
+    /**
      * 提交一个后台任务。
      *
      * @param guard 非空表示这是可取消的仓库刷新任务(见 {@link #dropStaleTasks()})
@@ -143,8 +171,9 @@ public final class Fx {
      */
     private static <T> void submit(String busyLabel, RepoGuard guard, Supplier<T> work,
                                    Consumer<T> onDone, BooleanSupplier valid) {
-        BgTask task = new BgTask(guard);
-        busyStart(busyLabel);
+        boolean tracked = busyLabel != null;
+        BgTask task = new BgTask(guard, tracked);
+        if (tracked) busyStart(task, busyLabel);
         SCHEDULED.incrementAndGet();
         IN_FLIGHT.add(task);
         task.future = POOL.submit(() -> {
@@ -240,16 +269,30 @@ public final class Fx {
     /** 因仓库已切换而被中断的旧仓库任务数(诊断)。 */
     public static int cancelledTasks() { return CANCELLED.get(); }
 
-    private static void busyStart(String label) {
+    private static void busyStart(BgTask task, String label) {
+        task.label = label;
+        ACTIVE.addLast(task);
         BUSY_DEPTH.incrementAndGet();
         busy(label);
     }
 
-    private static void busyEnd() {
+    private static void busyEnd(BgTask task) {
+        ACTIVE.remove(task);
         if (BUSY_DEPTH.decrementAndGet() <= 0) {
             BUSY_DEPTH.set(0);
             busy(null);
+            return;
         }
+        // 灯还亮着:把文案换成**还在跑**的那个任务,别挂着已经结束的任务的名字
+        BgTask last = ACTIVE.peekLast();
+        busy(last == null ? null : last.label);
+    }
+
+    /** 还在跑的忙碌文案(诊断:探针用它验证"忙碌文案指向的确实是还在跑的任务")。 */
+    public static List<String> activeLabels() {
+        List<String> out = new java.util.ArrayList<>();
+        for (BgTask t : ACTIVE) out.add(t.label);
+        return out;
     }
 
     public static void busy(String label) {
