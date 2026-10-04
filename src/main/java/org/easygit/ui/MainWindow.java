@@ -319,7 +319,12 @@ public class MainWindow {
 
     /** 工具栏合并对话框用的分支快照(在刷新时保存)。 */
     private List<BranchInfo> snapshotBranches = List.of();
-    /** 上一次轮询看到的引用指纹(HEAD + 所有分支/标签),用于判断历史页要不要重载。 */
+    /**
+     * 当前模式下最后一次看到的**历史指纹**,用于判断历史页要不要重载。
+     * 按模式收窄(见 {@link NativeGit#headFingerprint}):「所有分支」= 全部引用的指纹,
+     * 平时 = HEAD(+未推送集合)的指纹。两条取数路径(轮询/阶段一)必须用同一种格式,
+     * 否则会互相把对方当成"引用变了",每拍白重载一次历史。
+     */
     private String lastRefsFingerprint;
 
     /**
@@ -533,13 +538,16 @@ public class MainWindow {
             // 这一轮刷新已经结束(成功或失败),切换时的临时提示该撤了
             clearSwitchHint();
             if (data == null) return;
-            applyStatus(repo, data.status(), data.branches(), data.fingerprint());
-            rememberSnapshot(repo, data.status(), data.branches(), data.fingerprint());
+            // 历史指纹按**模式**收窄:「所有分支」用全部引用的指纹;平时只用 HEAD(+未推送集合),
+            // status 自带、一个进程都不多起。轮询与这里必须用同一种格式,否则会互相触发假重载。
+            String fp = allBranches ? data.fingerprint() : NativeGit.headFingerprint(data.status());
+            applyStatus(repo, data.status(), data.branches(), fp);
+            rememberSnapshot(repo, data.status(), data.branches(), fp, allBranches);
 
             // 提交历史:这里才拿到新的引用指纹,据此决定要不要重取。
             // 指纹 / 条数上限 / 「所有分支」/ 文件筛选都没变 ⇒ 缓存就是最新的,**一次 git 都不起**;
             // 变了才重载(「历史」页可见就立刻重载,不可见只置脏,等切到该页再补)。
-            boolean historyFresh = historyCacheMatches(repo, data.fingerprint(), allBranches, maxCommits);
+            boolean historyFresh = historyCacheMatches(repo, fp, allBranches, maxCommits);
             if (historyTab.isSelected()) {
                 if (!historyFresh) loadHistory(guard, repo, allBranches, maxCommits);
                 historyDirty = false;
@@ -609,22 +617,29 @@ public class MainWindow {
         RepoGuard guard = RepoGuard.capture();
         Path repo = guard.repo();
         if (repo == null) return;
+        boolean allBranches = historyPanel.allBranchesSelected();
         Fx.bg("刷新状态…", guard, () -> {
             try {
-                // 指纹覆盖所有引用,而不只是 HEAD:勾选「所有分支」时侧支/远程分支
-                // 的新提交不动 HEAD,只看 HEAD 会让历史页永远不刷新(用户必须手动点)。
-                // 指纹与状态互不依赖 —— 并行取,轮询这一拍也少等一个进程
-                org.easygit.core.Parallel.Both<String, StatusResult> both = org.easygit.core.Parallel.both(
-                        () -> NativeGit.refsFingerprint(repo), () -> NativeGit.status(repo));
-                return new LightData(both.second(), both.first());
+                if (allBranches) {
+                    // 「所有分支」:侧支/远程分支的新提交不动 HEAD,得盯全部引用;
+                    // 指纹与状态互不依赖 —— 并行取,轮询这一拍也少等一个进程
+                    org.easygit.core.Parallel.Both<String, StatusResult> both = org.easygit.core.Parallel.both(
+                            () -> NativeGit.refsFingerprint(repo), () -> NativeGit.status(repo));
+                    return new LightData(both.second(), both.first());
+                }
+                // 平时(没勾「所有分支」):历史与未推送集合只由 HEAD + 上游决定,
+                // 指纹用 status 自带的 branch.oid / branch.ab —— **少起一个 git 进程**;
+                // 别的工具建分支/打标签/抓远程也不会再被当成"历史变了"触发整份重载
+                StatusResult st = NativeGit.status(repo);
+                return new LightData(st, NativeGit.headFingerprint(st));
             } catch (Exception ex) {
                 UiLog.line("✖ 读取仓库状态失败: " + ex.getMessage());
                 return null;
             }
         }, data -> {
             if (data == null) return;
-            // 引用发生变化(新提交/amend/检出/新分支/远程更新)→ 重载历史;
-            // 但用户没在看「历史」页时只置脏,别为了看不见的列表起 2 个 git 进程
+            // 历史相关的引用变了(新提交/amend/检出/上游移动)→ 重载历史;
+            // 但用户没在看「历史」页时只置脏,别为了看不见的列表起 git 进程
             if (lastRefsFingerprint == null || !data.refs().equals(lastRefsFingerprint)) {
                 lastRefsFingerprint = data.refs();
                 if (historyTab.isSelected()) historyPanel.refresh();
@@ -634,7 +649,7 @@ public class MainWindow {
             changesPanel.refresh(data.st());
             // 轮询这条路径也要记快照:启动时仓库会被再选一次(旧 guard 作废、首屏整仓刷新的回调被丢弃),
             // 界面上的数据其实来自轮询 —— 只在那里记快照的话,切回来就"没东西可先显示"(实测两次挂一次)
-            rememberSnapshot(repo, data.st(), snapshotBranches, data.refs());
+            rememberSnapshot(repo, data.st(), snapshotBranches, data.refs(), allBranches);
             int staged = 0, unstaged = 0, untracked = 0, conflicts = 0;
             for (var f : data.st().changes()) {
                 if (f.unmerged) conflicts++;
@@ -664,8 +679,15 @@ public class MainWindow {
         tab.setOnClosed(e -> view.getChildren().clear());
     }
 
-    /** 一个仓库最近一次的「阶段一」数据(状态 + 分支 + 引用指纹)。 */
-    private record Snapshot(StatusResult status, List<BranchInfo> branches, String refs, long savedAt) {}
+    /**
+     * 一个仓库最近一次的「阶段一」数据:状态 + 分支 + **当时的历史指纹与模式**。
+     *
+     * 指纹按模式收窄(见 {@link NativeGit#headFingerprint}):「所有分支」是全部引用的指纹,
+     * 平时是 HEAD(+未推送集合)的指纹 —— 上屏时只有**模式相同**的快照才能当基线,
+     * 模式对不上宁可没有基线(下一拍轮询重载一次),也不能拿错格式的指纹把历史缓存判成"仍然有效"。
+     */
+    private record Snapshot(StatusResult status, List<BranchInfo> branches, String refs,
+                            boolean allBranches, long savedAt) {}
 
     /** 记住的仓库快照(按最近使用排序,超过上限丢最旧的):切回时先上屏用。 */
     private final java.util.LinkedHashMap<String, Snapshot> snapshots =
@@ -698,12 +720,16 @@ public class MainWindow {
      * 切回看过的仓库:先用上次快照把界面填上(stale-while-revalidate)。
      *
      * 这样切仓的感知延迟从「等两个 git 进程(350~500ms)」降到「立刻可见」,
-     * 后台刷新一到就替换成最新值;指纹也一并对齐,轮询能照常发现离开期间的变化。
+     * 后台刷新一到就替换成最新值;基线指纹也一并对齐(模式相同时),轮询能照常发现离开期间的变化。
      */
     private void paintSnapshot(Path repo, String repoName) {
         Snapshot snap = snapshots.get(repo.toString());
         if (snap == null) return;
-        applyStatus(repo, snap.status(), snap.branches(), snap.refs());
+        boolean allBranches = historyPanel.allBranchesSelected();
+        // 基线指纹必须和当前模式是**同一种格式**:快照是哪个模式存的就用哪种;
+        // 模式对不上宁可没有基线(下一拍轮询会重载一次),也不能拿错格式的指纹。
+        applyStatus(repo, snap.status(), snap.branches(),
+                snap.allBranches() == allBranches ? snap.refs() : null);
         // 提示里带上"这份快照是多久之前的":持久化之后快照可能来自上一次运行,不说明白就会让人以为界面卡住了
         switchHint = "已切换到 " + repoName + "（先显示" + ageText(snap.savedAt()) + "的快照，正在刷新…）";
         Fx.status(switchHint);
@@ -734,8 +760,9 @@ public class MainWindow {
         if (hint != null && hint.equals(Fx.lastMessage())) Fx.status("");
     }
 
-    private void rememberSnapshot(Path repo, StatusResult st, List<BranchInfo> branches, String refs) {
-        snapshots.put(repo.toString(), new Snapshot(st, branches, refs, System.currentTimeMillis()));
+    private void rememberSnapshot(Path repo, StatusResult st, List<BranchInfo> branches,
+                                  String refs, boolean allBranches) {
+        snapshots.put(repo.toString(), new Snapshot(st, branches, refs, allBranches, System.currentTimeMillis()));
         while (snapshots.size() > SNAPSHOT_MAX) {
             snapshots.remove(snapshots.keySet().iterator().next());
         }
@@ -746,10 +773,15 @@ public class MainWindow {
                                    int maxCommits, boolean allBranches, String pathFilter,
                                    long savedAt) {}
 
-    /** 记住的提交历史快照(按最近使用排序,上限 4 个仓库 —— 2000 条提交也就几 MB)。 */
+    /** 记住的提交历史快照(按最近使用排序,上限 8 个仓库 —— 与状态快照的 LRU 对齐)。 */
     private final java.util.LinkedHashMap<String, HistorySnapshot> historySnapshots =
             new java.util.LinkedHashMap<>(16, 0.75f, true);
-    private static final int HISTORY_SNAPSHOT_MAX = 4;
+    /**
+     * 历史快照的上限:**必须装得下用户管理的所有仓库**。原来只留 4 个,而仓库列表里有 6~7 个,
+     * 切来切去必然每次都把最早的挤出去 —— 切回时历史就得整份重载(实测 157~174ms,旧版串行要 340ms),
+     * 这正是"历史页太慢"的一大来源。2000 条提交的历史快照也就 ~300KB,8 个 = 2.4MB,不值得省。
+     */
+    private static final int HISTORY_SNAPSHOT_MAX = 8;
 
     /** 记一份历史快照。两条加载路径(主窗口整仓刷新、面板自己的刷新)都要走这里。 */
     private void rememberHistory(Path repo, List<CommitEntry> log, Set<String> unpushed,
@@ -775,11 +807,15 @@ public class MainWindow {
         if (saved.isEmpty()) return;
         var ps = saved.get();
         var st = ps.status();
+        // 落盘的指纹是"当时的模式"的,而磁盘上没有记模式 —— 上屏时**不带基线**(refs=null):
+        // 宁可让下一拍轮询重载一次,也不能拿错格式的指纹把历史缓存判成"仍然有效"。
+        // (整仓刷新的窗口里轮询本来就压着,phase1 一到基线就是新的)
         if (st != null) {
             snapshots.put(repo.toString(), new Snapshot(
                     new StatusResult(st.oid(), st.branch(), st.upstream(), st.detached(),
                             st.ahead(), st.behind(), st.changes()),
-                    st.branches() == null ? List.of() : st.branches(), ps.refs(), ps.savedAt()));
+                    st.branches() == null ? List.of() : st.branches(), null,
+                    ps.history() != null && ps.history().allBranches(), ps.savedAt()));
         }
         var h = ps.history();
         if (h != null && h.log() != null && !h.log().isEmpty()) {

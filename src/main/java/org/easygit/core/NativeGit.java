@@ -206,6 +206,20 @@ public final class NativeGit {
         return new RepoState(both.first(), both.second().branches(), both.second().fingerprint());
     }
 
+    /**
+     * 非「所有分支」模式下的**历史指纹**:提交历史(HEAD 的列表)与它的未推送集合只由
+     * HEAD 的位置和上游决定,而这两样 {@code status --porcelain=v2 --branch} 自带
+     * (branch.oid / branch.ab)—— **一个进程都不用多起**,轮询里少起一个 git。
+     *
+     * 别的工具在这台机器上动仓库是常事(建分支、打标签、抓取远程):全部引用的指纹
+     * ({@link #refsFingerprint})会把它们都当成"历史变了"触发整份重载;平时只盯
+     * HEAD + 上游,这些就都是噪声 —— 建分支/打标签不动 HEAD;抓取只动上游
+     * (用 ab 兜住:推送之后未推送集合清空,也靠它发现并重算)。
+     */
+    public static String headFingerprint(StatusResult st) {
+        return st.oid() + "|" + st.ahead() + "|" + st.behind();
+    }
+
     public static Map<String, String> remotes(Path repo) {
         GitProcess.GitResult r = GitProcess.in(repo).exec("remote", "-v");
         Map<String, String> map = new LinkedHashMap<>();
