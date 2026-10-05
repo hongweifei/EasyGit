@@ -1,5 +1,7 @@
 package org.easygit.ui.views;
 
+import org.easygit.core.SyntaxHighlighter;
+import org.easygit.core.SyntaxHighlighter.Language;
 import org.easygit.core.model.BlameLine;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -92,11 +94,43 @@ public class BlameView extends VBox {
             code.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(code, Priority.ALWAYS);
 
-            HBox box = new HBox(8, no, sha, author, date, code);
+            // 代码着色:有色彩才换成 TextFlow(与 DiffView 同一套策略,纯代码行仍是 Label)
+            javafx.scene.Node codeNode = code;
+            Language lang = SyntaxHighlighter.detect(path);
+            if (org.easygit.core.AppSettings.get().syntaxHighlight()
+                    && lang != Language.NONE && l.content != null && !l.content.isEmpty()) {
+                var spans = SyntaxHighlighter.highlight(lang, l.content);
+                if (SyntaxHighlighter.hasHighlight(spans)) {
+                    javafx.scene.text.TextFlow flow = new javafx.scene.text.TextFlow();
+                    flow.getStyleClass().add("code-flow");
+                    for (var s : spans) {
+                        javafx.scene.text.Text t = new javafx.scene.text.Text(s.text());
+                        t.getStyleClass().add(styleClassOf(s.kind()));
+                        flow.getChildren().add(t);
+                    }
+                    HBox.setHgrow(flow, Priority.ALWAYS);
+                    flow.setMaxWidth(Double.MAX_VALUE);
+                    codeNode = flow;
+                }
+            }
+
+            HBox box = new HBox(8, no, sha, author, date, codeNode);
             box.setAlignment(Pos.CENTER_LEFT);
             setGraphic(box);
         }
 
+        private String styleClassOf(SyntaxHighlighter.Kind kind) {
+            return switch (kind) {
+                case KEYWORD -> "syn-keyword";
+                case STRING -> "syn-string";
+                case COMMENT -> "syn-comment";
+                case NUMBER -> "syn-number";
+                case TYPE -> "syn-type";
+                case FUNCTION -> "syn-function";
+                case ANNOTATION -> "syn-annotation";
+                case PLAIN -> "syn-plain";
+            };
+        }
         private String toHex(Color c) {
             return String.format("#%02x%02x%02x",
                     (int) Math.round(c.getRed() * 255),

@@ -1,5 +1,7 @@
 package org.easygit.ui.views;
 
+import org.easygit.core.SyntaxHighlighter;
+import org.easygit.core.SyntaxHighlighter.Language;
 import org.easygit.core.model.DiffModels.DiffFile;
 import org.easygit.core.model.DiffModels.DiffHunk;
 import org.easygit.core.model.DiffModels.DiffLine;
@@ -51,11 +53,13 @@ public class DiffView extends VBox {
      * 一行。LINE = 统一视图/纯文件的一行,也是并排视图里的整行(文件头、@@ 头、提示)。
      * PAIR = 并排视图的一行:left 为旧文件侧,right 为新文件侧;
      * 某一侧为 null 表示该侧没有对应行(渲染为灰色填充块)。
+     *
+     * file 是**这一行属于哪个文件**:语法高亮要按它选语言(以前内容行不带文件,现在补上)。
      */
     private record Row(RowKind kind, DiffFile file, DiffLine left, DiffLine right) {
         static Row header(DiffFile f) { return new Row(RowKind.FILE_HEADER, f, null, null); }
-        static Row line(DiffLine l) { return new Row(RowKind.LINE, null, l, null); }
-        static Row pair(DiffLine left, DiffLine right) { return new Row(RowKind.PAIR, null, left, right); }
+        static Row line(DiffFile f, DiffLine l) { return new Row(RowKind.LINE, f, l, null); }
+        static Row pair(DiffFile f, DiffLine left, DiffLine right) { return new Row(RowKind.PAIR, f, left, right); }
     }
 
     private final ListView<Row> list = new ListView<>();
@@ -335,15 +339,15 @@ public class DiffView extends VBox {
         for (DiffFile f : currentFiles) {
             rs.add(Row.header(f));
             if (f.binary) {
-                rs.add(Row.line(new DiffLine(LineType.CONTEXT, -1, -1, "(二进制文件,内容未显示)")));
+                rs.add(Row.line(f, new DiffLine(LineType.CONTEXT, -1, -1, "(二进制文件,内容未显示)")));
                 continue;
             }
             for (DiffHunk h : f.hunks) {
-                rs.add(Row.line(new DiffLine(LineType.HUNK, -1, -1, h.header)));
-                for (DiffLine l : h.lines) rs.add(Row.line(l));
+                rs.add(Row.line(f, new DiffLine(LineType.HUNK, -1, -1, h.header)));
+                for (DiffLine l : h.lines) rs.add(Row.line(f, l));
             }
             if (f.hunks.isEmpty() && !f.newFile && !f.deletedFile) {
-                rs.add(Row.line(new DiffLine(LineType.CONTEXT, -1, -1, "(仅文件模式变化,无内容差异)")));
+                rs.add(Row.line(f, new DiffLine(LineType.CONTEXT, -1, -1, "(仅文件模式变化,无内容差异)")));
             }
         }
     }
@@ -355,7 +359,7 @@ public class DiffView extends VBox {
         rs.add(Row.header(f));
         int n = 1;
         for (String l : plainLines) {
-            rs.add(Row.line(new DiffLine(LineType.CONTEXT, -1, n, l)));
+            rs.add(Row.line(f, new DiffLine(LineType.CONTEXT, -1, n, l)));
             n++;
         }
     }
@@ -365,15 +369,15 @@ public class DiffView extends VBox {
         for (DiffFile f : currentFiles) {
             rs.add(Row.header(f));
             if (f.binary) {
-                rs.add(Row.line(new DiffLine(LineType.CONTEXT, -1, -1, "(二进制文件,内容未显示)")));
+                rs.add(Row.line(f, new DiffLine(LineType.CONTEXT, -1, -1, "(二进制文件,内容未显示)")));
                 continue;
             }
             for (DiffHunk h : f.hunks) {
-                rs.add(Row.line(new DiffLine(LineType.HUNK, -1, -1, h.header)));
-                pairHunkLines(rs, h.lines);
+                rs.add(Row.line(f, new DiffLine(LineType.HUNK, -1, -1, h.header)));
+                pairHunkLines(rs, f, h.lines);
             }
             if (f.hunks.isEmpty() && !f.newFile && !f.deletedFile) {
-                rs.add(Row.line(new DiffLine(LineType.CONTEXT, -1, -1, "(仅文件模式变化,无内容差异)")));
+                rs.add(Row.line(f, new DiffLine(LineType.CONTEXT, -1, -1, "(仅文件模式变化,无内容差异)")));
             }
         }
     }
@@ -383,13 +387,13 @@ public class DiffView extends VBox {
      * 数量不足的一侧用 null 补齐(渲染为灰色填充块),保证左右行数一致、上下对齐。
      * git 的 unified 格式在同一处修改里总是先列删除行再列新增行,这里按该约定扫描。
      */
-    private void pairHunkLines(List<Row> rs, List<DiffLine> lines) {
+    private void pairHunkLines(List<Row> rs, DiffFile f, List<DiffLine> lines) {
         int i = 0;
         final int n = lines.size();
         while (i < n) {
             DiffLine l = lines.get(i);
             if (l.type() == LineType.CONTEXT) {
-                rs.add(Row.pair(l, l));
+                rs.add(Row.pair(f, l, l));
                 i++;
                 continue;
             }
@@ -398,14 +402,15 @@ public class DiffView extends VBox {
             while (i < n && lines.get(i).type() == LineType.DEL) dels.add(lines.get(i++));
             while (i < n && lines.get(i).type() == LineType.ADD) adds.add(lines.get(i++));
             if (dels.isEmpty() && adds.isEmpty()) {   // 异常数据兜底,保证 while 一定前进
-                rs.add(Row.pair(l, l));
+                rs.add(Row.pair(f, l, l));
                 i++;
                 continue;
             }
             int count = Math.max(dels.size(), adds.size());
             for (int k = 0; k < count; k++) {
-                rs.add(Row.pair(k < dels.size() ? dels.get(k) : null,
-                                k < adds.size() ? adds.get(k) : null));
+                rs.add(Row.pair(f,
+                        k < dels.size() ? dels.get(k) : null,
+                        k < adds.size() ? adds.get(k) : null));
             }
         }
     }
@@ -416,17 +421,24 @@ public class DiffView extends VBox {
         // 统一视图的一行
         private final Label oldNo = new Label();
         private final Label newNo = new Label();
+        /** 无色彩行用 Label(节点少)。 */
         private final Label code = new Label();
+        /** 有色彩的行用 TextFlow(每个记号一个 Text)。 */
+        private final javafx.scene.text.TextFlow codeFlow = new javafx.scene.text.TextFlow();
         /** 代码块包在带裁剪的容器里:横向滚动时内容左移,不会画到行号列上,也不会溢出到隔壁栏。 */
         private final CodeArea codePane = codeArea(code);
         private final HBox lineBox = new HBox(oldNo, newNo, codePane);
         // 并排视图的一行(左右两栏各占一半)
         private final Label lNo = new Label();
         private final Label lCode = new Label();
-        private final HBox lHalf = makeHalf(lNo, lCode, false);
+        private final javafx.scene.text.TextFlow lFlow = new javafx.scene.text.TextFlow();
+        private final CodeArea lPane = new CodeArea(lCode);
+        private final HBox lHalf = makeHalf(lNo, lPane, lFlow, false);
         private final Label rNo = new Label();
         private final Label rCode = new Label();
-        private final HBox rHalf = makeHalf(rNo, rCode, true);
+        private final javafx.scene.text.TextFlow rFlow = new javafx.scene.text.TextFlow();
+        private final CodeArea rPane = new CodeArea(rCode);
+        private final HBox rHalf = makeHalf(rNo, rPane, rFlow, true);
         private final HBox pairBox = new HBox(lHalf, rHalf);
         private final Label header = new Label();
         private final VBox box = new VBox();
@@ -443,6 +455,7 @@ public class DiffView extends VBox {
             code.getStyleClass().add("mono");
             code.setFont(MONO);
             code.setWrapText(false);
+            codeFlow.getStyleClass().add("code-flow");
             lineBox.getStyleClass().add("diff-row");
             lineBox.setSpacing(0);
             lineBox.setAlignment(Pos.CENTER_LEFT);
@@ -472,29 +485,47 @@ public class DiffView extends VBox {
         /**
          * 代码区的裁剪容器。
          *
-         * 代码 Label 必须按**文本自身宽度**铺开(否则文本会被自己的宽度裁掉,横向滚动也看不到后半段),
+         * 代码内容必须按**文本自身宽度**铺开(否则文本会被自己的宽度裁掉,横向滚动也看不到后半段),
          * 但它的宽度绝不能向上传递给 HBox/ListView —— 一旦参与宽度协商,整个 diff 列会被撑宽
          * (实测:ListView 被撑到 1466px)。所以这里自己算宽度:min/pref 恒为 0(不参与协商,
-         * 靠 Hgrow 拿剩余空间),内部显式把 Label resize 成文本宽度,再用 clip 裁掉超出部分。
+         * 靠 Hgrow 拿剩余空间),内部显式把内容 resize 成文本宽度,再用 clip 裁掉超出部分。
+         *
+         * 内容节点是**可换的**:没有色彩的行用 Label(节点少、测量快),有色彩的行才换成 TextFlow
+         * (见 {@link #setContent})。这样"绝大多数行是纯代码"时不会为高亮付代价。
          */
         private class CodeArea extends Pane {
-            private final Label content;
+            private Node content;
 
-            CodeArea(Label content) {
-                this.content = content;
-                getChildren().add(content);
+            CodeArea(Node content) {
                 setMinWidth(0);
                 setPrefWidth(0);
                 setMaxWidth(Double.MAX_VALUE);
-                content.setWrapText(false);
-                content.setMinWidth(0);
-                content.setMaxWidth(Double.MAX_VALUE);
-                content.translateXProperty().bind(hOffset.negate());
+                setContent(content);
+                HBox.setHgrow(this, Priority.ALWAYS);
+            }
+
+            /** 换内容节点(Label 或 TextFlow),并保持同样的宽度/裁剪约束。 */
+            void setContent(Node node) {
+                if (content == node) return;
+                if (content != null) {
+                    content.translateXProperty().unbind();
+                    getChildren().remove(content);
+                }
+                content = node;
+                if (node instanceof javafx.scene.text.TextFlow tf) {
+                    tf.setMinWidth(0);
+                    tf.setMaxWidth(Double.MAX_VALUE);
+                } else if (node instanceof Label l) {
+                    l.setWrapText(false);
+                    l.setMinWidth(0);
+                    l.setMaxWidth(Double.MAX_VALUE);
+                }
+                getChildren().add(node);
+                node.translateXProperty().bind(hOffset.negate());
                 Rectangle clip = new Rectangle();
                 clip.widthProperty().bind(widthProperty());
                 clip.heightProperty().bind(heightProperty());
                 setClip(clip);
-                HBox.setHgrow(this, Priority.ALWAYS);
             }
 
             @Override protected double computeMinWidth(double h) { return 0; }
@@ -508,8 +539,13 @@ public class DiffView extends VBox {
             }
         }
 
-        private CodeArea codeArea(Label content) {
+        private CodeArea codeArea(Node content) {
             return new CodeArea(content);
+        }
+
+        /** 并排视图里某一半的代码容器(内容在 Label/TextFlow 之间切换)。 */
+        private CodeArea codeArea(Label label, javafx.scene.text.TextFlow flow) {
+            return new CodeArea(label);
         }
 
         /**
@@ -517,15 +553,13 @@ public class DiffView extends VBox {
          * prefWidth 归零 + Hgrow ALWAYS:两栏各分到一半宽度,与内容长短无关;
          * 不这样写的话 HBox 会按内容分配,左右栏宽度随文本变化而无法对齐。
          */
-        private HBox makeHalf(Label no, Label code, boolean right) {
+        private HBox makeHalf(Label no, CodeArea pane, javafx.scene.text.TextFlow flow, boolean right) {
             no.getStyleClass().addAll("mono", "diff-no");
             no.setMinWidth(NO_W);
             no.setPrefWidth(NO_W);
             no.setAlignment(Pos.CENTER_RIGHT);
-            code.getStyleClass().add("mono");
-            code.setFont(MONO);
-            code.setWrapText(false);
-            HBox h = new HBox(no, codeArea(code));
+            flow.getStyleClass().add("code-flow");
+            HBox h = new HBox(no, pane);
             h.getStyleClass().addAll("diff-half", right ? "diff-right" : "diff-left");
             h.setSpacing(0);
             h.setAlignment(Pos.CENTER_LEFT);
@@ -558,14 +592,16 @@ public class DiffView extends VBox {
             setTooltip(null);
             if (row.kind() == RowKind.PAIR) {
                 // 并排视图:左栏永远只可能是删除/上下文,右栏只可能是新增/上下文
-                setupHalf(lHalf, lNo, lCode, row.left(), true);
-                setupHalf(rHalf, rNo, rCode, row.right(), false);
+                setupHalf(lHalf, lNo, lPane, lCode, lFlow, row.file(), row.left(), true);
+                setupHalf(rHalf, rNo, rPane, rCode, rFlow, row.file(), row.right(), false);
                 box.getChildren().setAll(pairBox);
                 setGraphic(box);
                 return;
             }
             DiffLine l = row.left();
-            code.setText(l.text());
+            // 只有真正的代码行才着色:hunk 头(@@ … @@)与占位提示行(行号为 -1)不是代码
+            boolean colorable = l.type() != LineType.HUNK && l.newNo() >= 0;
+            fillContent(codePane, code, codeFlow, row.file(), l.text(), colorable);
             // 文件视图模式只显示一列行号
             boolean plain = plainFile.get();
             oldNo.setVisible(!plain);
@@ -592,12 +628,14 @@ public class DiffView extends VBox {
         }
 
         /** 并排视图的半栏上色。l 为 null 表示该侧无对应行,渲染为灰色填充块。 */
-        private void setupHalf(HBox half, Label no, Label code, DiffLine l, boolean leftSide) {
+        private void setupHalf(HBox half, Label no, CodeArea pane, Label code,
+                               javafx.scene.text.TextFlow flow, DiffFile file, DiffLine l, boolean leftSide) {
             half.getStyleClass().removeAll("diff-add", "diff-del", "diff-ctx", "diff-filler");
             if (l == null) {
                 half.getStyleClass().add("diff-filler");
                 no.setText("");
                 code.setText("");
+                pane.setContent(code);   // 填充块用空 Label
                 return;
             }
             switch (l.type()) {
@@ -607,7 +645,71 @@ public class DiffView extends VBox {
             }
             int num = leftSide ? l.oldNo() : l.newNo();
             no.setText(num > 0 ? String.valueOf(num) : "");
-            code.setText(l.text());
+            boolean colorable = l.type() != LineType.HUNK && num >= 0;
+            fillContent(pane, code, flow, file, l.text(), colorable);
+        }
+
+        /**
+         * 把一行文本放进代码容器。
+         *
+         * 没有色彩的行用 Label(节点少、测量快);有色彩才切到 TextFlow。
+         * 这个"按需切换"是刻意的:diff 里大多数行是上下文/纯符号,为它们各建几个 Text 节点
+         * 是白花(虚拟化列表里单元格反复重建)。
+         */
+        private void fillContent(CodeArea pane, Label label, javafx.scene.text.TextFlow flow,
+                                 DiffFile file, String text, boolean colorable) {
+            if (!colorable || text == null || text.isEmpty()
+                    || !org.easygit.core.AppSettings.get().syntaxHighlight()) {
+                label.setText(text == null ? "" : text);
+                pane.setContent(label);
+                return;
+            }
+            Language lang = languageFor(file);
+            if (lang == Language.NONE) {
+                label.setText(text);
+                pane.setContent(label);
+                return;
+            }
+            List<SyntaxHighlighter.Span> spans = SyntaxHighlighter.highlight(lang, text);
+            if (!SyntaxHighlighter.hasHighlight(spans)) {
+                // 整行都是普通代码:不值得为它建 TextFlow
+                label.setText(text);
+                pane.setContent(label);
+                return;
+            }
+            flow.getChildren().clear();
+            for (SyntaxHighlighter.Span s : spans) {
+                javafx.scene.text.Text t = new javafx.scene.text.Text(s.text());
+                t.getStyleClass().add(styleClassOf(s.kind()));
+                flow.getChildren().add(t);
+            }
+            pane.setContent(flow);
+        }
+
+        private String styleClassOf(SyntaxHighlighter.Kind kind) {
+            return switch (kind) {
+                case KEYWORD -> "syn-keyword";
+                case STRING -> "syn-string";
+                case COMMENT -> "syn-comment";
+                case NUMBER -> "syn-number";
+                case TYPE -> "syn-type";
+                case FUNCTION -> "syn-function";
+                case ANNOTATION -> "syn-annotation";
+                case PLAIN -> "syn-plain";
+            };
+        }
+
+        /** 这一行属于哪个文件 → 用哪种语言着色(每个 Cell 一份缓存:单元格会被复用,共享会串)。 */
+        private String langPath;
+        private Language langCache = Language.NONE;
+
+        private Language languageFor(DiffFile file) {
+            if (file == null) return Language.NONE;
+            String path = file.newPath == null || file.newPath.isEmpty() ? file.oldPath : file.newPath;
+            if (java.util.Objects.equals(path, langPath)) return langCache;
+            langPath = path;
+            langCache = SyntaxHighlighter.detect(path);
+            return langCache;
         }
     }
 }

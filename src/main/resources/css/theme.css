@@ -39,6 +39,16 @@
     -green-sel: #c3f0cd;
     -red-sel: #ffd9d5;
     -accent-sel: #c6e7e3;
+    /* ---- 语法高亮 ----
+       取值经对比度审计:必须在 diff 的**每种**底色上(panel / 增 / 删 / hunk soft)都 >= 4.5:1,
+       否则增删行上的注释就会糊掉。审计脚本:target/harness/syn-colors.ps1(亮色最差 5.23、暗色 6.09)。 */
+    -syn-keyword: #6f42c1;
+    -syn-string: #116329;
+    -syn-comment: #4b5563;
+    -syn-number: #0550ae;
+    -syn-type: #953800;
+    -syn-function: #6f42c1;
+    -syn-annotation: #953800;
     /* ---- 圆角(三档字面量:4=徽标/行内悬停, 6=按钮/输入框, 8=弹层/卡片) ----
        注意:JavaFX CSS 的 lookup 只支持颜色,数值类属性(-fx-*-radius)写
        -radius 会 ClassCastException 且静默失效,必须写字面量 */
@@ -99,6 +109,16 @@
     -green-sel: #1e4d2b;
     -red-sel: #6a2b2c;
     -accent-sel: #1c4a44;
+
+    /* 语法高亮(暗色):同样在 panel/增/删/hunk 四种底上审计过 —— 注释色不能取 GitHub 那个
+       #8b949e(在 add/hunk 底上只有 4.40/4.22),提亮到 #a8b3bd 后最差 6.09 */
+    -syn-keyword: #d2a8ff;
+    -syn-string: #7ee787;
+    -syn-comment: #a8b3bd;
+    -syn-number: #79c0ff;
+    -syn-type: #ffa657;
+    -syn-function: #d2a8ff;
+    -syn-annotation: #ffa657;
 
     /* Modena 桥接(暗色):控件默认文字色由 -fx-background 亮度推导,
        不覆盖它的话暗色背景上仍是深色文字(看不清的主因) */
@@ -554,6 +574,25 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .list-cell:selected .file-stat { -fx-text-fill: -fg; }
 
 .diff-no { -fx-padding: 0 6 0 0; }
+
+/* ---------- 语法高亮 ----------
+   高亮把一行拆成多个 Text 放进 TextFlow(见 DiffView 的 codeFlow)。
+   权重必须**不低于** `.diff-row .label`(0,2,0),否则整行会被它统一刷成 -fg;
+   这里用 `.diff-row .syn-xxx`(0,2,0)且写在后面取胜(同权重靠声明顺序)。
+   选中行上的高亮色保持不变:行底只是 soft/sel 色,四种底都已审计过对比度。 */
+.diff-row .syn-keyword,    .syn-keyword    { -fx-fill: -syn-keyword; }
+.diff-row .syn-string,     .syn-string     { -fx-fill: -syn-string; }
+.diff-row .syn-comment,    .syn-comment    { -fx-fill: -syn-comment; }
+.diff-row .syn-number,     .syn-number     { -fx-fill: -syn-number; }
+.diff-row .syn-type,       .syn-type       { -fx-fill: -syn-type; }
+.diff-row .syn-function,   .syn-function   { -fx-fill: -syn-function; }
+.diff-row .syn-annotation, .syn-annotation { -fx-fill: -syn-annotation; }
+/* 普通代码(PLAIN)不设色,继承 TextFlow 的 -fx-fill(与 Label 行为一致) */
+.diff-row .syn-plain { -fx-fill: -fg; }
+.code-flow { -fx-font-family: "Consolas", "Menlo", "DejaVu Sans Mono", "Noto Sans Mono", monospace; }
+.code-flow .text { -fx-font-family: "Consolas", "Menlo", "DejaVu Sans Mono", "Noto Sans Mono", monospace; }
+/* 注释在视觉上退后一档(斜体在等宽字体里常缺字形,不用) */
+.diff-row .syn-comment { -fx-font-style: normal; }
 .diff-file-header {
     -fx-background-color: -panel2;
     -fx-text-fill: -fg;

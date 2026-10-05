@@ -29,6 +29,8 @@ public final class AppSettings {
     public static final double DEFAULT_WINDOW_W = 1120, DEFAULT_WINDOW_H = 700;
     private double windowW = DEFAULT_WINDOW_W, windowH = DEFAULT_WINDOW_H;
     private String gitPath = "";
+    /** 代码高亮:默认开。关掉后 diff/文件/Blame 一律用单色 Label(节点最少、测量最快)。 */
+    private boolean syntaxHighlight = true;
 
     private static final AppSettings INSTANCE = new AppSettings();
 
@@ -76,6 +78,7 @@ public final class AppSettings {
                 windowW = o.optDouble("windowW", DEFAULT_WINDOW_W);
                 windowH = o.optDouble("windowH", DEFAULT_WINDOW_H);
                 gitPath = o.optString("gitPath", "");
+                syntaxHighlight = o.optBoolean("syntaxHighlight", true);
             }
         } catch (Throwable t) {
             System.err.println("读取设置失败: " + t);
@@ -114,6 +117,7 @@ public final class AppSettings {
             o.put("windowW", windowW);
             o.put("windowH", windowH);
             o.put("gitPath", gitPath);
+            o.put("syntaxHighlight", syntaxHighlight);
             Files.writeString(FILE, o.toString(2), StandardCharsets.UTF_8);
         } catch (Throwable t) {
             // 含 NoClassDefFoundError 等 Error:设置保存失败不应影响退出流程
@@ -170,4 +174,12 @@ public final class AppSettings {
     public double windowW() { return windowW; }
     public double windowH() { return windowH; }
     public void setWindowSize(double w, double h) { this.windowW = w; this.windowH = h; save(); }
+
+    /** 代码高亮开关(默认开)。 */
+    public boolean syntaxHighlight() { return syntaxHighlight; }
+
+    public void setSyntaxHighlight(boolean on) {
+        this.syntaxHighlight = on;
+        save();
+    }
 }

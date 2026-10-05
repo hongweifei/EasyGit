@@ -190,7 +190,10 @@ public final class SettingsDialog {
         gitPath.setPromptText(gitPathHint);
         HBox.setHgrow(gitPath, Priority.ALWAYS);
 
-        Label note = new Label("说明:git 路径修改后立即生效;主题立即生效;历史条数下次刷新生效。");
+        javafx.scene.control.CheckBox syntax = new javafx.scene.control.CheckBox("代码高亮(diff / 文件 / Blame)");
+        syntax.setSelected(s.syntaxHighlight());
+
+        Label note = new Label("说明:git 路径修改后立即生效;主题立即生效;历史条数与代码高亮下次刷新生效。");
         note.getStyleClass().add("dim");
         note.setWrapText(true);
 
@@ -210,6 +213,7 @@ public final class SettingsDialog {
                 return;
             }
             s.setGitPath(gitPath.getText().strip());
+            s.setSyntaxHighlight(syntax.isSelected());
             GitLocator.reset();
             Fx.status("应用设置已保存");
         });
@@ -218,6 +222,7 @@ public final class SettingsDialog {
                 new HBox(8, new Label("主题:"), theme),
                 new HBox(8, new Label("历史条数:"), maxCommits),
                 new HBox(8, new Label("git 路径:"), gitPath),
+                syntax,
                 note, save);
         box.setPadding(new Insets(10));
         Tab tab = new Tab("应用", box);
