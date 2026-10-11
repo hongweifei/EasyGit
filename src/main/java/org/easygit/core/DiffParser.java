@@ -3,6 +3,7 @@ package org.easygit.core;
 import org.easygit.core.model.DiffModels.DiffFile;
 import org.easygit.core.model.DiffModels.DiffHunk;
 import org.easygit.core.model.DiffModels.DiffLine;
+import org.easygit.core.model.DiffModels.Eol;
 import org.easygit.core.model.DiffModels.LineType;
 
 import java.util.ArrayList;
@@ -29,7 +30,11 @@ public final class DiffParser {
 
         String[] lines = patch.split("\n", -1);
         for (String raw : lines) {
-            String line = raw.endsWith("\r") ? raw.substring(0, raw.length() - 1) : raw;
+            // **保留**行尾:git diff 的原始输出逐行带着它自己的行尾(实测同一个 hunk 里
+            // 上下文行是 LF、新增行是 CRLF 都出现过)。丢掉它就无法区分"改了内容"与"只改了行尾"。
+            boolean crlf = raw.endsWith("\r");
+            String line = crlf ? raw.substring(0, raw.length() - 1) : raw;
+            Eol lineEol = crlf ? Eol.CRLF : Eol.LF;
             if (line.startsWith("diff --git ")) {
                 if (cur != null) finish(cur, added, deleted);
                 cur = new DiffFile();
@@ -73,22 +78,57 @@ public final class DiffParser {
             }
             if (hunk == null) continue; // 其他元数据行
             if (line.startsWith("+")) {
-                hunk.lines.add(new DiffLine(LineType.ADD, -1, newNo, line.substring(1)));
+                hunk.lines.add(new DiffLine(LineType.ADD, -1, newNo, line.substring(1), lineEol));
                 newNo++; added++;
             } else if (line.startsWith("-")) {
-                hunk.lines.add(new DiffLine(LineType.DEL, oldNo, -1, line.substring(1)));
+                hunk.lines.add(new DiffLine(LineType.DEL, oldNo, -1, line.substring(1), lineEol));
                 oldNo++; deleted++;
             } else if (line.startsWith(" ")) {
-                hunk.lines.add(new DiffLine(LineType.CONTEXT, oldNo, newNo, line.substring(1)));
+                hunk.lines.add(new DiffLine(LineType.CONTEXT, oldNo, newNo, line.substring(1), lineEol));
                 oldNo++; newNo++;
             } else if (line.startsWith("\\")) {
-                // "\ No newline at end of file"
-                hunk.lines.add(new DiffLine(LineType.CONTEXT, -1, -1, line));
+                // "\ No newline at end of file":标记**上一行**没有行尾。
+                // 这条也要落到数据里,否则"文件末尾少了换行"会被显示成内容改动。
+                hunk.lines.add(new DiffLine(LineType.CONTEXT, -1, -1, line, Eol.NONE));
+                if (!hunk.lines.isEmpty()) {
+                    int prev = hunk.lines.size() - 2;
+                    if (prev >= 0) {
+                        DiffLine p = hunk.lines.get(prev);
+                        hunk.lines.set(prev, new DiffLine(p.type(), p.oldNo(), p.newNo(), p.text(), Eol.NONE));
+                    }
+                }
             }
             // 空行结尾
         }
         if (cur != null) finish(cur, added, deleted);
+        // 标记"这次改动是否只是行尾"—— 纯行尾改动必须能被识别出来,否则界面会说"内容全改了"
+        for (DiffFile f : files) markEolOnly(f);
         return files;
+    }
+
+    /**
+     * 判断一个文件是不是**只改了行尾**:把删除行与新增行按顺序两两配对,文本都相同、
+     * 只有行尾不同 ⇒ 纯行尾改动。
+     *
+     * 这样界面就能说"行尾从 LF 改成 CRLF"而不是"3 行内容都改了"(后者会让人以为代码被动过)。
+     */
+    private static void markEolOnly(DiffFile f) {
+        List<DiffLine> dels = new ArrayList<>();
+        List<DiffLine> adds = new ArrayList<>();
+        for (DiffHunk h : f.hunks) {
+            for (DiffLine l : h.lines) {
+                if (l.type() == LineType.DEL) dels.add(l);
+                else if (l.type() == LineType.ADD) adds.add(l);
+            }
+        }
+        if (dels.isEmpty() || dels.size() != adds.size()) return;
+        for (int i = 0; i < dels.size(); i++) {
+            if (!dels.get(i).text().equals(adds.get(i).text())) return;
+            if (dels.get(i).eol() == adds.get(i).eol()) return;   // 行尾也一样 ⇒ 不是行尾改动
+        }
+        f.eolOnly = true;
+        f.eolFrom = dels.get(0).eol().label();
+        f.eolTo = adds.get(0).eol().label();
     }
 
     private static void finish(DiffFile f, int added, int deleted) {

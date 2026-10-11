@@ -34,21 +34,67 @@ public final class ConflictIO {
      * @param lines           文件行(不含换行符)
      * @param charset         原文件编码,写回时沿用
      * @param bom             是否带 UTF-8 BOM
-     * @param eol             换行风格(\r\n 或 \n),按原文件里出现的第一种判定
+     * @param eols            **每一行各自的行尾**("\r\n" / "\n" / "\r" / "" 表示最后一行没有行尾);
+     *                        逐行记而不是记一个"文件级风格",因为混合行尾的文件真实存在
      * @param trailingNewline 原文件是否以换行结尾(不然写回会凭空多/少一处差异)
      */
-    public record Content(List<String> lines, Charset charset, boolean bom, String eol,
+    public record Content(List<String> lines, Charset charset, boolean bom, List<String> eols,
                           boolean trailingNewline) {
 
-        /** 行列表还原成文本(含结尾换行,如原文件有)。 */
+        /**
+         * 文件级行尾风格:"LF" / "CRLF" / "CR" / "MIXED" / "NONE"(空文件)。
+         * 用来**告诉用户**这个文件是哪一种 —— 混合行尾是个值得看见的事实,不该被悄悄统一。
+         */
+        public String eolStyle() {
+            String only = null;
+            for (String e : eols) {
+                if (e.isEmpty()) continue;          // 末行无行尾,不参与风格判定
+                if (only == null) only = e;
+                else if (!only.equals(e)) return "MIXED";
+            }
+            if (only == null) return "NONE";
+            return switch (only) {
+                case "\r\n" -> "CRLF";
+                case "\n" -> "LF";
+                case "\r" -> "CR";
+                default -> "OTHER";
+            };
+        }
+
+        /** 第 i 行的行尾(越界或没有行尾时返回空串)。 */
+        public String eol(int i) {
+            if (i < 0 || i >= eols.size()) return "";
+            return eols.get(i);
+        }
+
+        /** 写回时用的"文件级"行尾:单一风格用它的;混合时用最常见的(逐行写回仍以 {@link #eols} 为准)。 */
+        public String dominantEol() {
+            String only = null;
+            int crlf = 0, lf = 0;
+            for (String e : eols) {
+                if (e.isEmpty()) continue;
+                if (only == null) only = e;
+                if ("\r\n".equals(e)) crlf++;
+                else if ("\n".equals(e)) lf++;
+            }
+            if (only == null) return "\n";
+            if (crlf == 0 && lf == 0) return only;
+            return crlf >= lf ? "\r\n" : "\n";
+        }
+
+        /** 行列表还原成文本(逐行用各自的行尾)。 */
         public String text() {
-            if (lines.isEmpty()) return "";
-            String s = String.join(eol, lines);
-            return trailingNewline ? s + eol : s;
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < lines.size(); i++) {
+                sb.append(lines.get(i));
+                String e = eol(i);
+                if (!e.isEmpty()) sb.append(e);
+            }
+            return sb.toString();
         }
     }
 
-    /** 读文件,保留编码/BOM/换行信息。 */
+    /** 读文件,保留编码/BOM/**逐行行尾**信息。 */
     public static Content read(Path file) throws IOException {
         byte[] raw = Files.readAllBytes(file);
         boolean bom = raw.length >= 3 && (raw[0] & 0xFF) == 0xEF
@@ -56,16 +102,26 @@ public final class ConflictIO {
         int off = bom ? 3 : 0;
         Charset cs = detectCharset(raw, off);
         String text = new String(raw, off, raw.length - off, cs);
-        String eol = text.contains("\r\n") ? "\r\n" : "\n";
-        boolean trailing = text.endsWith("\n") || text.endsWith("\r");
-        return new Content(splitLines(text), cs, bom, eol, trailing);
+        Split s = splitLines(text);
+        return new Content(s.lines(), cs, bom, s.eols(), s.trailing());
     }
 
-    /** 按原文件的编码/BOM/换行写回。 */
+    /**
+     * 按原文件的编码/BOM/换行写回。
+     *
+     * 行尾**按来源对齐**(见 {@link #alignEols}):每一行尽量用它原本那一行的行尾。
+     * 这样"只解决一个冲突块"不会把其余任何一行的行尾改掉 —— 包括冲突块**之后**的行
+     * (块被替换后行号会平移,单纯按下标取行尾会把后面的行全带错)。
+     */
     public static void write(Path file, Content proto, List<String> lines) throws IOException {
-        String text = lines.isEmpty() ? "" : String.join(proto.eol(), lines);
-        if (!lines.isEmpty() && proto.trailingNewline()) text += proto.eol();
-        byte[] body = text.getBytes(proto.charset());
+        List<String> eols = alignEols(proto, lines);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++) {
+            sb.append(lines.get(i));
+            if (i == lines.size() - 1 && !proto.trailingNewline()) break;   // 原文件末行无行尾
+            sb.append(eols.get(i));
+        }
+        byte[] body = sb.toString().getBytes(proto.charset());
         if (!proto.bom()) {
             Files.write(file, body);
             return;
@@ -76,6 +132,45 @@ public final class ConflictIO {
         all[2] = (byte) 0xBF;
         System.arraycopy(body, 0, all, 3, body.length);
         Files.write(file, all);
+    }
+
+    /** 向后查找同文本行的窗口:冲突块一般只有几行,查太远没有意义还会把重复行对错。 */
+    private static final int LOOKAHEAD = 64;
+
+    /**
+     * 为每一行输出对齐一个行尾。
+     *
+     * 规则(单调前进,不回头):
+     * <ol>
+     *   <li>源文件同下标那行文本相同 → 用它那一行的行尾(未改动的行,绝大多数走这条);</li>
+     *   <li>否则从游标往后找 {@value #LOOKAHEAD} 行内第一个同文本的行 → 用它(冲突块被替换后,
+     *       后面的行会平移,靠这条找回自己的行尾);</li>
+     *   <li>都找不到(新增行 / 用户改过的行)→ 用文件的主导行尾,绝不用"同下标那行"的行尾
+     *       (那可能正是被删掉的冲突标记行)。</li>
+     * </ol>
+     */
+    static List<String> alignEols(Content proto, List<String> lines) {
+        List<String> out = new ArrayList<>(lines.size());
+        int cursor = 0;
+        for (int i = 0; i < lines.size(); i++) {
+            String text = lines.get(i);
+            int hit = -1;
+            if (i < proto.lines().size() && proto.lines().get(i).equals(text)) {
+                hit = i;
+            } else {
+                int end = Math.min(proto.lines().size(), Math.max(cursor, i) + LOOKAHEAD);
+                for (int k = Math.max(cursor, i); k < end; k++) {
+                    if (proto.lines().get(k).equals(text)) { hit = k; break; }
+                }
+            }
+            if (hit >= 0) {
+                cursor = hit + 1;
+                out.add(proto.eol(hit).isEmpty() ? proto.dominantEol() : proto.eol(hit));
+            } else {
+                out.add(proto.dominantEol());
+            }
+        }
+        return out;
     }
 
     /**
@@ -99,19 +194,43 @@ public final class ConflictIO {
         }
     }
 
-    /** 按 \r\n / \n / \r 切行;结尾换行不产生幽灵空行(是否结尾换行见 trailingNewline)。 */
-    private static List<String> splitLines(String text) {
+    /** 切行结果:行 + **每行各自的行尾** + 是否以换行结尾。 */
+    private record Split(List<String> lines, List<String> eols, boolean trailing) {}
+
+    /**
+     * 按 \r\n / \n / \r 切行,**逐行记下它用的行尾**。
+     *
+     * 旧实现只记一个文件级风格({@code contains("\r\n") ? CRLF : LF}),于是混合行尾的文件
+     * (部分行被编辑器改过、或某工具只改了新增行)写回时会被整份统一成一种 —— 正好是这个类
+     * 要防的"只解决一处、整文件变红"。逐行记才能做到"没动的行一个字节都不变"。
+     *
+     * 结尾换行不产生幽灵空行(是否结尾换行见 {@link Content#trailingNewline})。
+     */
+    private static Split splitLines(String text) {
         List<String> out = new ArrayList<>();
+        List<String> eols = new ArrayList<>();
         int start = 0;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c != '\n' && c != '\r') continue;
-            int end = i;
-            if (c == '\r' && i + 1 < text.length() && text.charAt(i + 1) == '\n') i++;
-            out.add(text.substring(start, end));
+            String eol;
+            if (c == '\r' && i + 1 < text.length() && text.charAt(i + 1) == '\n') {
+                eol = "\r\n";
+                i++;
+            } else {
+                eol = String.valueOf(c);
+            }
+            out.add(text.substring(start, i + 1 - eol.length()));
+            eols.add(eol);
             start = i + 1;
         }
-        if (start < text.length()) out.add(text.substring(start));
-        return out;
+        boolean trailing = false;
+        if (start < text.length()) {
+            out.add(text.substring(start));   // 末行没有行尾
+            eols.add("");
+        } else if (!eols.isEmpty()) {
+            trailing = true;                  // 文本以换行结尾
+        }
+        return new Split(out, eols, trailing);
     }
 }

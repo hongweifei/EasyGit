@@ -38,7 +38,7 @@ class ConflictIOTest {
 
         ConflictIO.Content c = ConflictIO.read(f);
         assertEquals(List.of("第一行", "second"), c.lines());
-        assertEquals("\n", c.eol());
+        assertEquals("LF", c.eolStyle());
         assertTrue(c.trailingNewline());
         assertEquals(StandardCharsets.UTF_8, c.charset());
         assertFalse(c.bom());
@@ -55,7 +55,7 @@ class ConflictIOTest {
         Files.write(f, raw);
 
         ConflictIO.Content c = ConflictIO.read(f);
-        assertEquals("\r\n", c.eol());
+        assertEquals("CRLF", c.eolStyle());
         assertEquals(List.of("line1", "line2", "line3"), c.lines());
 
         ConflictIO.write(f, c, c.lines());
@@ -133,5 +133,69 @@ class ConflictIOTest {
         byte[] out = bytes(f);
         assertEquals("header\r\ntheirs\r\nfooter\r\n", new String(out, StandardCharsets.UTF_8));
         assertFalse(ConflictParser.hasMarkers(ConflictIO.read(f).lines()));
+    }
+
+    @Test
+    @DisplayName("混合行尾的文件:每一行各自的行尾都要保住,不能被统一成一种")
+    void mixedLineEndingsPreserved() throws Exception {
+        Path f = tmp("mixed.txt");
+        // 第 1 行 LF、第 2 行 CRLF、第 3 行 LF —— 真实仓库里很常见(部分行被编辑器改过)
+        byte[] raw = "a\nb\r\nc\n".getBytes(StandardCharsets.UTF_8);
+        Files.write(f, raw);
+
+        ConflictIO.Content c = ConflictIO.read(f);
+        assertEquals(List.of("a", "b", "c"), c.lines());
+        assertEquals("\n", c.eol(0), "第 1 行是 LF");
+        assertEquals("\r\n", c.eol(1), "第 2 行是 CRLF");
+        assertEquals("\n", c.eol(2), "第 3 行是 LF");
+        assertEquals("MIXED", c.eolStyle(), "混合行尾要被识别成 MIXED");
+
+        // 原样写回:一个字节都不能变
+        ConflictIO.write(f, c, c.lines());
+        assertArrayEquals(raw, bytes(f),
+                "混合行尾文件被统一成一种行尾 —— 整份文件都会变成改动");
+    }
+
+    @Test
+    @DisplayName("混合行尾 + 解决冲突:只动冲突块,其余行的原行尾不变")
+    void mixedLineEndingsSurviveConflictResolution() throws Exception {
+        Path f = tmp("mixed-conflict.txt");
+        byte[] raw = ("head\n"
+                + "<<<<<<< HEAD\r\n"
+                + "ours\r\n"
+                + "=======\n"
+                + "theirs\n"
+                + ">>>>>>> origin/main\r\n"
+                + "tail\n").getBytes(StandardCharsets.UTF_8);
+        Files.write(f, raw);
+
+        ConflictIO.Content c = ConflictIO.read(f);
+        ConflictFile cf = ConflictParser.parse("mixed-conflict.txt", c.lines());
+        List<String> resolved = ConflictParser.resolve(cf, List.of(0), "theirs");
+        ConflictIO.write(f, c, resolved);
+
+        String out = new String(bytes(f), StandardCharsets.UTF_8);
+        assertEquals("head\ntheirs\ntail\n", out,
+                "head/tail 是 LF,必须保持 LF(不能被冲突块里的 CRLF 带跑)");
+    }
+
+    @Test
+    @DisplayName("行尾风格可查询:单一 LF / 单一 CRLF / 混合 各有明确结论")
+    void eolStyleReported() throws Exception {
+        Path lf = tmp("only-lf.txt");
+        Files.write(lf, "a\nb\n".getBytes(StandardCharsets.UTF_8));
+        assertEquals("LF", ConflictIO.read(lf).eolStyle());
+
+        Path crlf = tmp("only-crlf.txt");
+        Files.write(crlf, "a\r\nb\r\n".getBytes(StandardCharsets.UTF_8));
+        assertEquals("CRLF", ConflictIO.read(crlf).eolStyle());
+
+        Path mixed = tmp("mix.txt");
+        Files.write(mixed, "a\r\nb\n".getBytes(StandardCharsets.UTF_8));
+        assertEquals("MIXED", ConflictIO.read(mixed).eolStyle());
+
+        Path cr = tmp("only-cr.txt");
+        Files.write(cr, "a\rb\r".getBytes(StandardCharsets.UTF_8));
+        assertEquals("CR", ConflictIO.read(cr).eolStyle(), "老 Mac 风格也要认出来");
     }
 }

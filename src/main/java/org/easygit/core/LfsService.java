@@ -222,15 +222,21 @@ public final class LfsService {
         return GitProcess.in(repo).exec("lfs", "track", pattern.strip());
     }
 
-    /** 从 .gitattributes 移除一条跟踪规则(直接编辑文件并暂存)。 */
+    /**
+     * 从 .gitattributes 移除一条跟踪规则(直接编辑文件并暂存)。
+     *
+     * 读写走 {@link ConflictIO}:它保留编码、BOM 与**逐行行尾**。旧实现是
+     * {@code Files.readAllLines} + {@code Files.write} —— 后者按平台默认行尾写(Windows 上是 CRLF),
+     * 于是删一条 LFS 规则会把整个 .gitattributes 的行尾改掉,提交里凭空多出一堆无关改动。
+     */
     public static GitProcess.GitResult untrack(Path repo, String pattern) {
         try {
             Path ga = repo.resolve(".gitattributes");
             if (!Files.isRegularFile(ga)) return new GitProcess.GitResult(-1, "", "没有 .gitattributes");
-            List<String> lines = Files.readAllLines(ga);
+            ConflictIO.Content content = ConflictIO.read(ga);
             List<String> kept = new ArrayList<>();
             boolean changed = false;
-            for (String line : lines) {
+            for (String line : content.lines()) {
                 String s = line.strip();
                 if (!s.isEmpty() && !s.startsWith("#") && s.contains("filter=lfs")
                         && s.split("\\s+")[0].equals(pattern)) {
@@ -240,7 +246,7 @@ public final class LfsService {
                 kept.add(line);
             }
             if (!changed) return new GitProcess.GitResult(-1, "", "未找到该规则: " + pattern);
-            Files.write(ga, kept);
+            ConflictIO.write(ga, content, kept);
             return GitProcess.in(repo).exec("add", ".gitattributes");
         } catch (Exception e) {
             return new GitProcess.GitResult(-1, "", e.getMessage() == null ? e.toString() : e.getMessage());
