@@ -482,6 +482,16 @@ TabPane > .tab-header-area > .headers-region > .tab:selected > .tab-container > 
 .stat-add { -fx-text-fill: -green; }
 .stat-del { -fx-text-fill: -red; }
 
+/* 纯行尾改动的徽标(⏎ LF→CRLF):用中性色 —— 它既不是新增也不是删除,
+   只是换行符不同。放在这里是为了让"内容没改"一眼可见。 */
+.eol-tag {
+    -fx-background-color: -amber-soft;
+    -fx-text-fill: -amber;
+    -fx-padding: 0 5 0 5;
+    -fx-background-radius: 4;
+    -fx-font-size: 11px;
+}
+
 /* ---------- 徽标 / 状态 ---------- */
 
 .chip {

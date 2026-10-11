@@ -566,12 +566,19 @@ public class CommitDetailPanel extends VBox {
             Label delStat = new Label("-" + f.deleted);
             delStat.getStyleClass().addAll("mono", "stat-del");
             HBox box = new HBox(8, dot(displayPath(f)), path, addStat, delStat);
+            // 纯行尾改动:徽标说明"只是换行符变了",别让用户以为代码被动过
+            if (f.eolOnly) {
+                Label eolTag = new Label("⏎ " + f.eolFrom + "→" + f.eolTo);
+                eolTag.getStyleClass().add("eol-tag");
+                box.getChildren().add(eolTag);
+            }
             box.setAlignment(Pos.CENTER_LEFT);
             if (getListView() != null) {
                 box.prefWidthProperty().bind(getListView().widthProperty().subtract(30));
             }
             setGraphic(box);
-            setTooltip(Fx.tip(displayPath(f) + "   +" + f.added + " -" + f.deleted));
+            setTooltip(Fx.tip(displayPath(f) + "   +" + f.added + " -" + f.deleted
+                    + (f.eolOnly ? "\n(仅换行符从 " + f.eolFrom + " 变为 " + f.eolTo + ",内容未改)" : "")));
         }
     }
 

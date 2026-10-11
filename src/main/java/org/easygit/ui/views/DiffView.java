@@ -582,11 +582,16 @@ public class DiffView extends VBox {
                 DiffFile f = row.file();
                 String stat = f.binary ? "(二进制)"
                         : (f.added == 0 && f.deleted == 0 ? "" : " +" + f.added + " -" + f.deleted);
-                header.setText(f.displayPath() + (stat.isEmpty() ? "" : "   " + stat));
+                // 纯行尾改动必须说清楚:内容一字未变,只是 LF/CRLF 不同。不标注的话
+                // 用户看到"每行都变了"会以为代码被动过(这是行尾最容易误导人的地方)。
+                String eolNote = f.eolOnly ? "   ⏎ 仅行尾 " + f.eolFrom + " → " + f.eolTo : "";
+                header.setText(f.displayPath() + (stat.isEmpty() ? "" : "   " + stat) + eolNote);
                 box.getChildren().setAll(header);
                 setGraphic(box);
                 // 文件头行显示路径,窄栏会被省略号截断;悬停给全名(单元格复用,别的行必须清掉)
-                setTooltip(Fx.tip(f.displayPath() + (stat.isEmpty() ? "" : "   " + stat)));
+                setTooltip(Fx.tip(f.displayPath() + (stat.isEmpty() ? "" : "   " + stat) + eolNote
+                        + (f.eolOnly ? "\n(这个文件的内容没有变化,只是换行符从 " + f.eolFrom
+                        + " 变成了 " + f.eolTo + ")" : "")));
                 return;
             }
             setTooltip(null);
