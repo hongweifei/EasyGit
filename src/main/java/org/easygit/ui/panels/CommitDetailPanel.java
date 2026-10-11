@@ -182,6 +182,9 @@ public class CommitDetailPanel extends VBox {
 
         fileTree.setShowRoot(false);
         fileTree.setCellFactory(v -> new TreeCellOf());
+        // 稳定锚点:场景里还有左侧仓库树/分支树,按 .tree-view 找会抓错(探针踩过);
+        // 样式与测试都按 id 定位这一棵。
+        fileTree.setId("commit-file-tree");
         fileTree.getSelectionModel().selectedItemProperty().addListener((o, ov, nv) -> {
             if (updatingUi || nv == null || nv.getValue() == null) return;
             TreeEnt ent = nv.getValue();
@@ -590,7 +593,9 @@ public class CommitDetailPanel extends VBox {
             } else {
                 int depth = (getTreeView() != null && getTreeItem() != null)
                         ? getTreeView().getTreeItemLevel(getTreeItem()) : 0;
-                Label p = new Label(ent.fullPath());
+                // 只显示文件名:树本身已经把目录层级摊开了,再写全路径就是重复
+                // (树形列表存在的意义就是让人不用读路径)。全路径留在悬停提示里。
+                Label p = new Label(ent.name());
                 p.setTextOverrun(javafx.scene.control.OverrunStyle.LEADING_ELLIPSIS);
                 p.setMinWidth(0);
                 p.setMaxWidth(Double.MAX_VALUE);
